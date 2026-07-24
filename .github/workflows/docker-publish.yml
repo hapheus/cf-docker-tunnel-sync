@@ -50,7 +50,7 @@ jobs:
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
       - name: Build and Push Docker Image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: ./cf-tunnel-sync
           file: ./cf-tunnel-sync/Dockerfile
@@ -58,12 +58,3 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           platforms: linux/amd64,linux/arm64
-
-      - name: Update Docker Hub Description
-        uses: peter-evans/dockerhub-description@v4
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: ${{ secrets.DOCKERHUB_USERNAME }}/cf-tunnel-sync
-          short-description: "Dynamically expose Docker containers via Cloudflare Zero Trust Tunnels using container labels."
-          readme-filepath: ./DOCKERHUB.md
