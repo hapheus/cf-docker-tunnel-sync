@@ -1,0 +1,51 @@
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared
+    restart: always
+    command: tunnel --no-autoupdate run --token-file /etc/cloudflared/token
+    volumes:
+      - cf_token_data:/etc/cloudflared
+    networks:
+      - cf-tunnel-net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  cf-tunnel-sync:
+    image: hapheus/cf-tunnel-sync:latest
+    container_name: cf-tunnel-sync
+    restart: always
+    environment:
+      - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}
+      - DOMAIN_NAME=${DOMAIN_NAME}
+      - CLOUDFLARE_TUNNEL_NAME=${CLOUDFLARE_TUNNEL_NAME:-cf-docker-tunnel-sync}
+      - POLL_INTERVAL=30
+      - BASIC_AUTH_USERNAME=${BASIC_AUTH_USERNAME:-admin}
+      - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-admin}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - cf_token_data:/etc/cloudflared
+    labels:
+      - "cf.tunnel.hostname=tunnel-sync.${DOMAIN_NAME}"
+      - "cf.tunnel.port=8090"
+    ports:
+      - "8090:8090"
+    networks:
+      - cf-tunnel-net
+
+  # Example Service (uncomment to test)
+  # web-example:
+  #   image: nginx:alpine
+  #   container_name: web-example
+  #   labels:
+  #     - "cf.tunnel.hostname=hello.${DOMAIN_NAME}"
+  #     - "cf.tunnel.port=80"
+  #   networks:
+  #     - cf-tunnel-net
+
+networks:
+  cf-tunnel-net:
+    driver: bridge
+
+volumes:
+  cf_token_data:

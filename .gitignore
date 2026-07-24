@@ -1,0 +1,19 @@
+# Environment variables
+.env
+
+# JetBrains IDE
+.idea/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Python caches and compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.venv/
+venv/
+env/
