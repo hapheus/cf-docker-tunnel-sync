@@ -11,11 +11,11 @@ No local scripts, no cron jobs, and no complex manual tunnel setup required. Jus
 *Here are the steps and dashboard previews:*
 
 1. **Cloudflare API Token Configuration**
-   ![Cloudflare Token Setup](./images/cloudflare_token_setup.png)
+   ![Cloudflare Token Setup](./images/cloudflare_token_setup.jpg)
    *(Create a custom token with specific edit rights for Zone and Cloudflare Tunnels)*
 
 2. **Sync Dashboard Overview**
-   ![Sync Dashboard](./images/sync_dashboard.png)
+   ![Sync Dashboard](./images/sync_dashboard.jpg)
    *(Access your status page on port 8090 to monitor containers, DNS status, and sync logs)*
 
 ---
