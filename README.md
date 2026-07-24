@@ -13,11 +13,11 @@ No local scripts, no cron jobs, and no complex manual tunnel setup required. Jus
 *Here are the steps and dashboard previews:*
 
 1. **Cloudflare API Token Configuration**
-   ![Cloudflare Token Setup](./images/cloudflare_token_setup.jpg)
+   ![Cloudflare Token Setup](./images/cloudflare_token_setup.png)
    *(Create a custom token with specific edit rights for Zone and Cloudflare Tunnels)*
 
 2. **Sync Dashboard Overview**
-   ![Sync Dashboard](./images/sync_dashboard.jpg)
+   ![Sync Dashboard](./images/sync_dashboard.png)
    *(Access your status page on port 8090 to monitor containers, DNS status, and sync logs)*
 
 ---
@@ -115,7 +115,19 @@ Start the containers:
 docker compose up -d
 ```
 
-Your Sync Dashboard is now available at `http://your-pi-ip:8090` (and will be exposed via tunnel at `https://tunnel-sync.yourdomain.com`).
+Your Sync Dashboard is now available at `http://your-pi-ip:8090` (and will be exposed via tunnel at `https://tunnel-sync.${DOMAIN_NAME}`).
+
+> ⚠️ **Dashboard Security & Basic Auth:** The dashboard is protected by Basic Authentication with default credentials `admin` / `admin`. You can change these inside your `.env` file (`BASIC_AUTH_USERNAME` and `BASIC_AUTH_PASSWORD`).
+>
+> While you can expose the dashboard publicly via the Cloudflare Tunnel (as shown in the default configuration), **it is highly recommended not to expose it to the public internet**. 
+>
+> To keep the dashboard private and only accessible inside your local home network, simply remove the `labels` section from the `cf-tunnel-sync` service in your `docker-compose.yml`:
+> ```yaml
+> # Remove these lines to disable public exposure:
+> # labels:
+> #   - "cf.tunnel.hostname=tunnel-sync.${DOMAIN_NAME}"
+> #   - "cf.tunnel.port=8090"
+> ```
 
 ---
 

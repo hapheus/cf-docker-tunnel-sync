@@ -70,6 +70,20 @@ Start the stack:
 docker compose up -d
 ```
 
+Your Sync Dashboard is now available at `http://your-pi-ip:8090` (and will be exposed via tunnel at `https://tunnel-sync.${DOMAIN_NAME}`).
+
+> ⚠️ **Dashboard Security & Basic Auth:** The dashboard is protected by Basic Authentication with default credentials `admin` / `admin`. You can change these inside your `.env` file (`BASIC_AUTH_USERNAME` and `BASIC_AUTH_PASSWORD`).
+>
+> While you can expose the dashboard publicly via the Cloudflare Tunnel (as shown in the default configuration), **it is highly recommended not to expose it to the public internet**. 
+>
+> To keep the dashboard private and only accessible inside your local home network, simply remove the `labels` section from the `cf-tunnel-sync` service in your `docker-compose.yml`:
+> ```yaml
+> # Remove these lines to disable public exposure:
+> # labels:
+> #   - "cf.tunnel.hostname=tunnel-sync.${DOMAIN_NAME}"
+> #   - "cf.tunnel.port=8090"
+> ```
+
 ---
 
 ## 🐳 Exposing Containers
