@@ -129,7 +129,7 @@ services:
     image: nginx:alpine
     container_name: my-app
     labels:
-      - "cf.tunnel.hostname=app.yourdomain.com"
+      - "cf.tunnel.hostname=app.${DOMAIN_NAME}"
       - "cf.tunnel.port=80"
     networks:
       - cf-tunnel-net
@@ -159,7 +159,7 @@ If you have a service running directly on your host machine (outside Docker) and
        command: sleep infinity
        restart: always
        labels:
-         - "cf.tunnel.hostname=local-service.yourdomain.com"
+         - "cf.tunnel.hostname=local-service.${DOMAIN_NAME}"
          - "cf.tunnel.service=http://host.docker.internal:8080" # Port running on your host OS
        networks:
          - cf-tunnel-net

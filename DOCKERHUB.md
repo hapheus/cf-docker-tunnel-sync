@@ -82,7 +82,7 @@ services:
     image: nginx:alpine
     container_name: my-web-app
     labels:
-      - "cf.tunnel.hostname=app.yourdomain.com"
+      - "cf.tunnel.hostname=app.${DOMAIN_NAME}"
       - "cf.tunnel.port=80"
     networks:
       - cf-tunnel-net
