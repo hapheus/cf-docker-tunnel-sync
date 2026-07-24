@@ -4,6 +4,8 @@ An automated tool to dynamically expose Docker containers using a **Cloudflare Z
 
 This image scans your running Docker containers, automatically creates/configures a Cloudflare Tunnel, updates the ingress rules, and registers the required CNAME records on Cloudflare.
 
+> ℹ️ **Domain Requirement:** Your domain must be **managed by Cloudflare** (meaning its DNS name servers point to Cloudflare). The domain does **not** need to be registered with Cloudflare Registrar (you can buy it anywhere else, like GoDaddy, Namecheap, etc.).
+
 For full documentation, source code, and developer guides, visit the [GitHub Repository](https://github.com/hapheus/cf-docker-tunnel-sync).
 
 ---

@@ -4,6 +4,8 @@ An automated tool to dynamically expose Docker containers using a **Cloudflare Z
 
 No local scripts, no cron jobs, and no complex manual tunnel setup required. Just add labels to your Docker containers, and they will be online in seconds.
 
+> ℹ️ **Domain Requirement:** Your domain must be **managed by Cloudflare** (meaning its DNS name servers point to Cloudflare). The domain does **not** need to be registered with Cloudflare Registrar (you can buy it anywhere else, like GoDaddy, Namecheap, etc.).
+
 ---
 
 ## 📸 Screenshots & Previews
