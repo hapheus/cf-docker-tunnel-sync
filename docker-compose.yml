@@ -26,8 +26,10 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - cf_token_data:/etc/cloudflared
-    ports:
-      - "8090:8090"
+    # The unauthenticated API is intentionally only reachable inside this
+    # Compose network. Access it through the dashboard proxy when needed.
+    expose:
+      - "8090"
     networks:
       - cf-tunnel-net
     healthcheck:
@@ -45,18 +47,20 @@ services:
     container_name: cf-tunnel-dashboard
     restart: always
     environment:
-      - BASIC_AUTH_USERNAME=${BASIC_AUTH_USERNAME:-admin}
-      - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-admin}
+      - DASHBOARD_AUTH_ENABLED=${DASHBOARD_AUTH_ENABLED:-true}
+      - BASIC_AUTH_USERNAME=${BASIC_AUTH_USERNAME:-}
+      - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-}
     ports:
-      - "8080:80"
+      - "${DASHBOARD_BIND_ADDRESS:-0.0.0.0}:${DASHBOARD_PORT:-8080}:80"
     networks:
       - cf-tunnel-net
     depends_on:
       cf-tunnel-sync:
         condition: service_healthy
-    labels:
-      - "cf.tunnel.hostname=tunnel-sync.${DOMAIN_NAME}"
-      - "cf.tunnel.port=80"
+    # Optional: expose the dashboard through the Cloudflare Tunnel.
+    # labels:
+    #   - "cf.tunnel.hostname=tunnel-sync.${DOMAIN_NAME}"
+    #   - "cf.tunnel.port=80"
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1/health || exit 1"]
       interval: 10s

@@ -122,7 +122,7 @@
                     return;
                 }
                 const data = await res.json();
-                
+
                 document.getElementById('status-badge').innerText = data.status;
                 if (data.status.includes('Active') || data.status.includes('Synced')) {
                     document.getElementById('status-badge').className = 'px-3 py-1 text-xs font-semibold rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
@@ -149,7 +149,7 @@
 
                         let tunnelInfo = '<span class="text-slate-600 font-sans text-xs italic">-</span>';
                         let dnsInfo = '<span class="text-slate-600 font-sans text-xs italic">-</span>';
-                        
+
                         if (c.is_tunneled) {
                             tunnelInfo = `<a href="https://${c.hostname}" target="_blank" class="text-orange-400 hover:underline flex items-center gap-1.5 font-semibold">
                                 ${c.hostname}

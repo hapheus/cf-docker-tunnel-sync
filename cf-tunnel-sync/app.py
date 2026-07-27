@@ -1,33 +1,21 @@
 import os
-import re
 import json
 import time
 import asyncio
 import logging
 import urllib.request
-import urllib.error
 import socket
 import http.client
-import secrets
 from typing import List, Dict
 
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI
 from fastapi.responses import JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("cf-tunnel-sync")
 
 app = FastAPI(title="Cloudflare Tunnel & DNS Sync")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origin_regex="https?://.*",
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 
 sync_state = {
