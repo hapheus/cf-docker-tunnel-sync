@@ -18,7 +18,7 @@ No local scripts, no cron jobs, and no complex manual tunnel setup required. Jus
 
 2. **Sync Dashboard Overview**
    ![Sync Dashboard](./images/sync_dashboard.png)
-   *(Access your status page on port 8090 to monitor containers, DNS status, and sync logs)*
+   *(Access your optional status page on port 8080 to monitor containers, DNS status, and sync logs)*
 
 ---
 
@@ -27,7 +27,8 @@ No local scripts, no cron jobs, and no complex manual tunnel setup required. Jus
 - **Automatic Service Discovery:** Scans running containers via `/var/run/docker.sock`.
 - **Zero-Config Tunnels:** Automatically creates, configures, and runs a Cloudflare Tunnel using your API token.
 - **Dynamic DNS Management:** Syncs CNAME records for labeled containers and cleans up obsolete ones when containers stop.
-- **Web Dashboard:** Simple, password-protected dark-mode dashboard showing current routing status and live logs.
+- **Separated & Optional Web Dashboard:** A lightweight, password-protected dark-mode dashboard running on Nginx, completely decoupled from the core sync logic.
+- **API-First Design:** The Core service exposes a complete Web API so you can monitor and manage the sync process headless.
 - **Multi-Arch Support:** Docker image works on standard Linux (AMD64) and Raspberry Pi (ARM64).
 
 ---
@@ -89,18 +90,43 @@ services:
       - DOMAIN_NAME=${DOMAIN_NAME}
       - CLOUDFLARE_TUNNEL_NAME=${CLOUDFLARE_TUNNEL_NAME:-cf-docker-tunnel-sync}
       - POLL_INTERVAL=30
-      - BASIC_AUTH_USERNAME=${BASIC_AUTH_USERNAME:-admin}
-      - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-admin}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - cf_token_data:/etc/cloudflared
-    labels:
-      - "cf.tunnel.hostname=tunnel-sync.${DOMAIN_NAME}"
-      - "cf.tunnel.port=8090"
     ports:
       - "8090:8090"
     networks:
       - cf-tunnel-net
+    healthcheck:
+      test: ["CMD", "python", "healthcheck.py"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  cf-tunnel-dashboard:
+    image: your-dockerhub-username/cf-tunnel-dashboard:latest
+    container_name: cf-tunnel-dashboard
+    restart: always
+    environment:
+      - BASIC_AUTH_USERNAME=${BASIC_AUTH_USERNAME:-admin}
+      - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-admin}
+    ports:
+      - "8080:80"
+    networks:
+      - cf-tunnel-net
+    depends_on:
+      cf-tunnel-sync:
+        condition: service_healthy
+    labels:
+      - "cf.tunnel.hostname=tunnel-sync.${DOMAIN_NAME}"
+      - "cf.tunnel.port=80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 2s
 
 networks:
   cf-tunnel-net:
@@ -109,24 +135,25 @@ networks:
 volumes:
   cf_token_data:
 ```
-
 Start the containers:
 ```bash
 docker compose up -d
 ```
 
-Your Sync Dashboard is now available at `http://your-pi-ip:8090` (and will be exposed via tunnel at `https://tunnel-sync.${DOMAIN_NAME}`).
+Your Sync Dashboard is now available at `http://your-pi-ip:8080` (and will be exposed via tunnel at `https://tunnel-sync.${DOMAIN_NAME}`). If you only want to access the API directly, it is available at `http://your-pi-ip:8090`.
 
-> ⚠️ **Dashboard Security & Basic Auth:** The dashboard is protected by Basic Authentication with default credentials `admin` / `admin`. You can change these inside your `.env` file (`BASIC_AUTH_USERNAME` and `BASIC_AUTH_PASSWORD`).
+> ℹ️ **Dashboard is Optional:** If you do not need the visual web dashboard and want to save resources or run headless, you can completely comment out or remove the `cf-tunnel-dashboard` service block from your `docker-compose.yml`. The core sync container `cf-tunnel-sync` will continue to run and sync your containers perfectly.
+
+> ⚠️ **Dashboard Security & Basic Auth:** The dashboard itself is protected by Basic Authentication with default credentials `admin` / `admin`. You can change these inside your `.env` file (`BASIC_AUTH_USERNAME` and `BASIC_AUTH_PASSWORD`).
 >
 > While you can expose the dashboard publicly via the Cloudflare Tunnel (as shown in the default configuration), **it is highly recommended not to expose it to the public internet**. 
 >
-> To keep the dashboard private and only accessible inside your local home network, simply remove the `labels` section from the `cf-tunnel-sync` service in your `docker-compose.yml`:
+> To keep the dashboard private and only accessible inside your local home network, simply remove the `labels` section from the `cf-tunnel-dashboard` service in your `docker-compose.yml`:
 > ```yaml
 > # Remove these lines to disable public exposure:
 > # labels:
 > #   - "cf.tunnel.hostname=tunnel-sync.${DOMAIN_NAME}"
-> #   - "cf.tunnel.port=8090"
+> #   - "cf.tunnel.port=80"
 > ```
 
 ---
@@ -189,8 +216,8 @@ If you have a service running directly on your host machine (outside Docker) and
 | `CLOUDFLARE_API_TOKEN` | API Token created in Step 1. | - | Yes |
 | `CLOUDFLARE_TUNNEL_NAME` | The name for the Cloudflare Tunnel. | `cf-docker-tunnel-sync` | No |
 | `POLL_INTERVAL` | Docker socket scan interval in seconds. | `30` | No |
-| `BASIC_AUTH_USERNAME` | Web UI Dashboard username. | `admin` | No |
-| `BASIC_AUTH_PASSWORD` | Web UI Dashboard password. | `admin` | No |
+| `BASIC_AUTH_USERNAME` | Web API / Dashboard username. | `admin` | No |
+| `BASIC_AUTH_PASSWORD` | Web API / Dashboard password. | `admin` | No |
 
 ---
 
