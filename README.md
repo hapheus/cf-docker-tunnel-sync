@@ -85,7 +85,7 @@ services:
       - "host.docker.internal:host-gateway"
 
   cf-tunnel-sync:
-    image: your-dockerhub-username/cf-tunnel-sync:latest
+    image: hapheus/cf-tunnel-sync:latest
     container_name: cf-tunnel-sync
     restart: always
     environment:
@@ -109,7 +109,7 @@ services:
       start_period: 5s
 
   cf-tunnel-dashboard:
-    image: your-dockerhub-username/cf-tunnel-dashboard:latest
+    image: hapheus/cf-tunnel-dashboard:latest
     container_name: cf-tunnel-dashboard
     restart: always
     environment:
