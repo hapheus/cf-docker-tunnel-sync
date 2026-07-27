@@ -85,7 +85,7 @@ services:
       - "host.docker.internal:host-gateway"
 
   cf-tunnel-sync:
-    image: your-dockerhub-username/cf-tunnel-sync:latest
+    image: hapheus/cf-tunnel-sync:latest
     container_name: cf-tunnel-sync
     restart: always
     environment:
@@ -109,7 +109,7 @@ services:
       start_period: 5s
 
   cf-tunnel-dashboard:
-    image: your-dockerhub-username/cf-tunnel-dashboard:latest
+    image: hapheus/cf-tunnel-dashboard:latest
     container_name: cf-tunnel-dashboard
     restart: always
     environment:
@@ -146,7 +146,7 @@ Start the containers:
 docker compose up -d
 ```
 
-Your Sync Dashboard is now available on your local network at `http://your-pi-ip:8080`. The Core API is intentionally not exposed on a host port; it is accessible only to services in `cf-tunnel-net`.
+Your Sync Dashboard is now available on your local network at `http://your-host-ip:8080`. The Core API is intentionally not exposed on a host port; it is accessible only to services in `cf-tunnel-net`.
 
 > ℹ️ **Dashboard is Optional:** If you do not need the visual web dashboard and want to save resources or run headless, you can completely comment out or remove the `cf-tunnel-dashboard` service block from your `docker-compose.yml`. The core sync container `cf-tunnel-sync` will continue to run and sync your containers perfectly.
 
