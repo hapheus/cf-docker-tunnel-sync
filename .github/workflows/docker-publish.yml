@@ -10,6 +10,15 @@ on:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - service: cf-tunnel-sync
+            context: ./cf-tunnel-sync
+            file: ./cf-tunnel-sync/Dockerfile
+          - service: cf-tunnel-dashboard
+            context: ./cf-tunnel-dashboard
+            file: ./cf-tunnel-dashboard/Dockerfile
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -43,7 +52,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/cf-tunnel-sync
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
@@ -52,8 +61,8 @@ jobs:
       - name: Build and Push Docker Image
         uses: docker/build-push-action@v6
         with:
-          context: ./cf-tunnel-sync
-          file: ./cf-tunnel-sync/Dockerfile
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

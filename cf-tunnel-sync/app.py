@@ -1,19 +1,15 @@
 import os
-import re
 import json
 import time
 import asyncio
 import logging
 import urllib.request
-import urllib.error
 import socket
 import http.client
-import secrets
 from typing import List, Dict
 
-from fastapi import FastAPI, Depends, HTTPException, status
-from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 import uvicorn
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -21,7 +17,6 @@ logger = logging.getLogger("cf-tunnel-sync")
 
 app = FastAPI(title="Cloudflare Tunnel & DNS Sync")
 
-security = HTTPBasic()
 
 sync_state = {
     "last_sync": None,
@@ -43,18 +38,6 @@ def add_log(msg: str):
     if len(sync_state["logs"]) > 100:
         sync_state["logs"].pop()
 
-def authenticate(credentials: HTTPBasicCredentials = Depends(security)):
-    correct_username = os.getenv("BASIC_AUTH_USERNAME", "admin")
-    correct_password = os.getenv("BASIC_AUTH_PASSWORD", "admin")
-    is_correct_username = secrets.compare_digest(credentials.username, correct_username)
-    is_correct_password = secrets.compare_digest(credentials.password, correct_password)
-    if not (is_correct_username and is_correct_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Basic"},
-        )
-    return credentials.username
 
 class UnixHTTPConnection(http.client.HTTPConnection):
     def __init__(self, socket_path):
@@ -301,224 +284,18 @@ async def sync_loop():
 async def startup_event():
     asyncio.create_task(sync_loop())
 
+@app.get("/health")
+def health():
+    return {"status": "healthy", "sync_status": sync_state["status"]}
+
 @app.get("/api/status")
-def api_status(username: str = Depends(authenticate)):
+def api_status():
     return JSONResponse(sync_state)
 
 @app.post("/api/sync")
-def api_sync(username: str = Depends(authenticate)):
+def api_sync():
     run_sync_logic()
     return JSONResponse({"message": "Sync triggered", "state": sync_state})
-
-HTML_PAGE = """<!DOCTYPE html>
-<html lang="en" class="dark">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cloudflare Tunnel & Docker Sync</title>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            darkMode: 'class',
-            theme: {
-                extend: {
-                    fontFamily: {
-                        sans: ['Outfit', 'sans-serif'],
-                        mono: ['Fira Code', 'monospace'],
-                    },
-                    colors: {
-                        brand: {
-                            500: '#f97316',
-                            600: '#ea580c',
-                        }
-                    }
-                }
-            }
-        }
-    </script>
-    <style>
-        body {
-            font-family: 'Outfit', sans-serif;
-        }
-    </style>
-</head>
-<body class="bg-slate-950 text-slate-100 min-h-screen">
-    <div class="max-w-7xl mx-auto px-4 py-8">
-        <!-- Header -->
-        <header class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-slate-800">
-            <div>
-                <h1 class="text-3xl font-extrabold flex items-center gap-3">
-                    <span class="text-orange-500">☁️ Cloudflare Tunnel Sync</span>
-                </h1>
-                <p class="text-slate-400 text-sm mt-1">Automatic Docker service discovery & DNS synchronization via Cloudflare Zero Trust</p>
-            </div>
-            <div class="flex items-center gap-3">
-                <span id="status-badge" class="px-3 py-1 text-xs font-semibold rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">
-                    Initializing...
-                </span>
-                <button onclick="triggerSync()" id="sync-btn" class="bg-orange-600 hover:bg-orange-500 text-white text-sm font-medium px-4 py-2.5 rounded-lg transition-all shadow-lg shadow-orange-950/20 flex items-center gap-2">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
-                    Sync Now
-                </button>
-            </div>
-        </header>
-
-        <!-- Main Stats Grid -->
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 my-8">
-            <div class="bg-slate-900/60 backdrop-blur border border-slate-800 rounded-xl p-5 shadow-sm">
-                <div class="text-xs uppercase tracking-wider text-slate-500 font-bold">Tunnel Name</div>
-                <div class="text-xl font-bold text-slate-100 mt-2" id="tunnel-name">-</div>
-                <div class="text-xs text-slate-400 mt-1 font-mono" id="tunnel-id">ID: -</div>
-            </div>
-
-            <div class="bg-slate-900/60 backdrop-blur border border-slate-800 rounded-xl p-5 shadow-sm">
-                <div class="text-xs uppercase tracking-wider text-slate-500 font-bold">Domain Name</div>
-                <div class="text-xl font-bold text-slate-100 mt-2" id="domain-name">-</div>
-                <div class="text-xs text-orange-400 mt-1">Cloudflare Managed</div>
-            </div>
-
-            <div class="bg-slate-900/60 backdrop-blur border border-slate-800 rounded-xl p-5 shadow-sm">
-                <div class="text-xs uppercase tracking-wider text-slate-500 font-bold">Last Synchronization</div>
-                <div class="text-xl font-bold text-slate-100 mt-2" id="last-sync">-</div>
-                <div class="text-xs text-slate-400 mt-1">Interval: every 30s</div>
-            </div>
-        </div>
-
-        <!-- Layout -->
-        <div class="space-y-8">
-            <!-- Discovered Hostnames Section -->
-            <div class="bg-slate-900 border border-slate-800 rounded-xl p-6">
-                <h2 class="text-lg font-bold mb-4 flex items-center gap-2">
-                    <span>🐳 Docker Container Status & Cloudflare Routing</span>
-                </h2>
-                <div class="overflow-x-auto">
-                    <table class="w-full text-left text-sm">
-                        <thead class="text-xs text-slate-400 uppercase bg-slate-950/50 border-b border-slate-800">
-                            <tr>
-                                <th class="px-4 py-3">Container</th>
-                                <th class="px-4 py-3">Image</th>
-                                <th class="px-4 py-3">Status</th>
-                                <th class="px-4 py-3">Subdomain / Public Hostname</th>
-                                <th class="px-4 py-3">Cloudflare DNS</th>
-                            </tr>
-                        </thead>
-                        <tbody id="hosts-tbody" class="divide-y divide-slate-800 text-slate-300 font-mono text-xs">
-                            <tr>
-                                <td colspan="5" class="px-4 py-6 text-center text-slate-500 font-sans">Searching for containers...</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-
-            <!-- Live Log Panel -->
-            <div class="bg-slate-900 border border-slate-800 rounded-xl p-6">
-                <h2 class="text-lg font-bold mb-4 flex items-center justify-between">
-                    <span>📜 Live Event Log</span>
-                    <span class="text-xs font-mono text-slate-500">Auto-refresh</span>
-                </h2>
-                <div id="logs-container" class="bg-slate-950 font-mono text-xs p-4 rounded-lg h-60 overflow-y-auto space-y-1 text-slate-300 border border-slate-800/80">
-                    <div class="text-slate-500">Waiting for events...</div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <script>
-        async function fetchStatus() {
-            try {
-                const res = await fetch('/api/status');
-                if (res.status === 401) {
-                    window.location.reload();
-                    return;
-                }
-                const data = await res.json();
-                
-                document.getElementById('status-badge').innerText = data.status;
-                if (data.status.includes('Active') || data.status.includes('Synced')) {
-                    document.getElementById('status-badge').className = 'px-3 py-1 text-xs font-semibold rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
-                } else if (data.status.includes('Error')) {
-                    document.getElementById('status-badge').className = 'px-3 py-1 text-xs font-semibold rounded-full bg-rose-500/20 text-rose-400 border border-rose-500/30';
-                } else {
-                    document.getElementById('status-badge').className = 'px-3 py-1 text-xs font-semibold rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30';
-                }
-
-                document.getElementById('tunnel-name').innerText = data.tunnel_name || '-';
-                document.getElementById('tunnel-id').innerText = data.tunnel_id ? `ID: ${data.tunnel_id.substring(0, 18)}...` : 'ID: -';
-                document.getElementById('domain-name').innerText = data.domain_name || '-';
-                document.getElementById('last-sync').innerText = data.last_sync || 'Never';
-
-                const tbody = document.getElementById('hosts-tbody');
-                if (data.all_containers && data.all_containers.length > 0) {
-                    tbody.innerHTML = data.all_containers.map(c => {
-                        let statusBadge = '';
-                        if (c.state === 'running') {
-                            statusBadge = `<span class="px-2 py-0.5 text-xs rounded bg-emerald-950 text-emerald-400 border border-emerald-800">Running</span>`;
-                        } else {
-                            statusBadge = `<span class="px-2 py-0.5 text-xs rounded bg-rose-950 text-rose-400 border border-rose-800">${c.state}</span>`;
-                        }
-
-                        let tunnelInfo = '<span class="text-slate-600 font-sans text-xs italic">-</span>';
-                        let dnsInfo = '<span class="text-slate-600 font-sans text-xs italic">-</span>';
-                        
-                        if (c.is_tunneled) {
-                            tunnelInfo = `<a href="https://${c.hostname}" target="_blank" class="text-orange-400 hover:underline flex items-center gap-1.5 font-semibold">
-                                ${c.hostname}
-                                <svg class="w-3.5 h-3.5 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
-                            </a>`;
-                            dnsInfo = `<span class="text-emerald-400 font-semibold">Active & Synced</span>`;
-                        } else if (c.hostname !== '-') {
-                            tunnelInfo = `<span class="text-slate-500 line-through">${c.hostname}</span>`;
-                            dnsInfo = `<span class="text-slate-500 font-sans italic text-xs">Stopped (Inactive)</span>`;
-                        }
-
-                        return `
-                            <tr class="hover:bg-slate-800/50">
-                                <td class="px-4 py-3 font-sans font-medium text-slate-200">${c.name}</td>
-                                <td class="px-4 py-3 text-slate-400 text-xs">${c.image}</td>
-                                <td class="px-4 py-3">${statusBadge}</td>
-                                <td class="px-4 py-3">${tunnelInfo}</td>
-                                <td class="px-4 py-3">${dnsInfo}</td>
-                            </tr>
-                        `;
-                    }).join('');
-                } else {
-                    tbody.innerHTML = '<tr><td colspan="5" class="px-4 py-6 text-center text-slate-500 font-sans">No containers found.</td></tr>';
-                }
-
-                const logContainer = document.getElementById('logs-container');
-                if (data.logs && data.logs.length > 0) {
-                    logContainer.innerHTML = data.logs.map(log => `<div>${log}</div>`).join('');
-                }
-            } catch (err) {
-                console.error("Fetch status error:", err);
-            }
-        }
-
-        async function triggerSync() {
-            const btn = document.getElementById('sync-btn');
-            btn.disabled = true;
-            btn.classList.add('opacity-50');
-            try {
-                await fetch('/api/sync', { method: 'POST' });
-                await fetchStatus();
-            } finally {
-                btn.disabled = false;
-                btn.classList.remove('opacity-50');
-            }
-        }
-
-        setInterval(fetchStatus, 3000);
-        fetchStatus();
-    </script>
-</body>
-</html>
-"""
-
-@app.get("/", response_class=HTMLResponse)
-def index(username: str = Depends(authenticate)):
-    return HTML_PAGE
 
 if __name__ == '__main__':
     uvicorn.run("app:app", host="0.0.0.0", port=8090)
