@@ -2,10 +2,13 @@ import os
 import json
 import time
 import asyncio
+import threading
 import logging
 import urllib.request
+import urllib.error
 import socket
 import http.client
+from contextlib import asynccontextmanager
 from typing import List, Dict
 
 from fastapi import FastAPI
@@ -15,15 +18,17 @@ import uvicorn
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("cf-tunnel-sync")
 
-app = FastAPI(title="Cloudflare Tunnel & DNS Sync")
+def get_domain_name() -> str:
+    return os.getenv("DOMAIN_NAME", "").strip()
 
+sync_lock = threading.Lock()
 
 sync_state = {
     "last_sync": None,
     "status": "Initializing",
     "tunnel_id": None,
-    "tunnel_name": os.getenv("CLOUDFLARE_TUNNEL_NAME", "cf-docker-tunnel-sync"),
-    "domain_name": os.getenv("DOMAIN_NAME", "fraha.dev"),
+    "tunnel_name": os.getenv("CLOUDFLARE_TUNNEL_NAME", "cf-docker-tunnel-sync").strip(),
+    "domain_name": get_domain_name(),
     "discovered_services": [],
     "all_containers": [],
     "dns_records": [],
@@ -75,8 +80,20 @@ def cf_api(endpoint: str, token: str, method: str = 'GET', data: dict = None) ->
     }
     body = json.dumps(data).encode('utf-8') if data else None
     req = urllib.request.Request(url, data=body, headers=headers, method=method)
-    with urllib.request.urlopen(req) as resp:
-        return json.loads(resp.read().decode('utf-8'))
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return json.loads(resp.read().decode('utf-8'))
+    except urllib.error.HTTPError as e:
+        err_body = e.read().decode('utf-8')
+        try:
+            err_json = json.loads(err_body)
+            errors = err_json.get("errors", [])
+            if errors:
+                err_text = "; ".join(f"{err.get('message')} (code: {err.get('code')})" for err in errors)
+                raise RuntimeError(f"Cloudflare API Error ({e.code}): {err_text}") from None
+        except (json.JSONDecodeError, AttributeError):
+            pass
+        raise RuntimeError(f"Cloudflare HTTP {e.code}: {err_body}") from None
 
 def get_docker_containers() -> tuple[List[Dict[str, str]], List[Dict[str, str]]]:
     services = []
@@ -93,6 +110,8 @@ def get_docker_containers() -> tuple[List[Dict[str, str]], List[Dict[str, str]]]
                 image = c.get('Image', '')
 
                 hostname = labels.get('cf.tunnel.hostname') or labels.get('cf.tunnel.domain') or labels.get('cloudflared.hostname')
+                if hostname:
+                    hostname = hostname.strip()
 
                 is_tunneled = False
                 service_url = ""
@@ -131,32 +150,33 @@ def get_docker_containers() -> tuple[List[Dict[str, str]], List[Dict[str, str]]]
     return services, all_containers
 
 def run_sync_logic():
-    token = os.getenv("CLOUDFLARE_API_TOKEN")
-    domain = os.getenv("DOMAIN_NAME", "fraha.dev")
-    tunnel_name = os.getenv("CLOUDFLARE_TUNNEL_NAME", "cf-docker-tunnel-sync")
-    account_id = os.getenv("CLOUDFLARE_ACCOUNT_ID")
-
-    sync_state["status"] = "Syncing..."
-    sync_state["domain_name"] = domain
-    sync_state["tunnel_name"] = tunnel_name
-
-    if not token or token == "your_cloudflare_api_token_here":
-        sync_state["status"] = "Waiting for CLOUDFLARE_API_TOKEN in .env"
-        add_log("⚠️ CLOUDFLARE_API_TOKEN missing or default placeholder in .env!")
+    if not sync_lock.acquire(blocking=False):
+        add_log("⏳ Sync already in progress, skipping concurrent run")
         return
 
     try:
-        # 1. Account ID
-        if not account_id:
-            acc_resp = cf_api("/accounts", token)
-            accounts = acc_resp.get("result", [])
-            if not accounts:
-                add_log("❌ No Cloudflare accounts found for this token!")
-                sync_state["status"] = "Error: No Account"
-                return
-            account_id = accounts[0]["id"]
+        token = os.getenv("CLOUDFLARE_API_TOKEN")
+        domain = get_domain_name()
+        tunnel_name = os.getenv("CLOUDFLARE_TUNNEL_NAME", "cf-docker-tunnel-sync").strip()
+        account_id = os.getenv("CLOUDFLARE_ACCOUNT_ID")
+        if account_id:
+            account_id = account_id.strip()
 
-        # 2. Zone ID
+        sync_state["status"] = "Syncing..."
+        sync_state["domain_name"] = domain
+        sync_state["tunnel_name"] = tunnel_name
+
+        if not token or token == "your_cloudflare_api_token_here":
+            sync_state["status"] = "Waiting for CLOUDFLARE_API_TOKEN in .env"
+            add_log("⚠️ CLOUDFLARE_API_TOKEN missing or default placeholder in .env!")
+            return
+
+        if not domain or domain == "yourdomain.com":
+            sync_state["status"] = "Waiting for DOMAIN_NAME in .env"
+            add_log("⚠️ DOMAIN_NAME missing or default placeholder in .env!")
+            return
+
+        # 1. Resolve Zone ID (and Account ID from Zone)
         zones_resp = cf_api(f"/zones?name={domain}", token)
         zones = zones_resp.get("result", [])
         if not zones:
@@ -165,7 +185,25 @@ def run_sync_logic():
             return
         zone_id = zones[0]["id"]
 
-        # 3. Tunnel
+        if not account_id:
+            zone_account = zones[0].get("account", {})
+            account_id = zone_account.get("id")
+
+        if not account_id:
+            try:
+                acc_resp = cf_api("/accounts", token)
+                accounts = acc_resp.get("result", [])
+                if accounts:
+                    account_id = accounts[0]["id"]
+            except Exception:
+                pass
+
+        if not account_id:
+            add_log("❌ No Cloudflare accounts found for this token or zone!")
+            sync_state["status"] = "Error: No Account"
+            return
+
+        # 2. Tunnel
         tunnels_resp = cf_api(f"/accounts/{account_id}/cfd_tunnel?name={tunnel_name}&is_deleted=false", token)
         tunnels = tunnels_resp.get("result", [])
         if tunnels:
@@ -181,7 +219,7 @@ def run_sync_logic():
 
         sync_state["tunnel_id"] = tunnel_id
 
-        # 4. Retrieve Tunnel Token & write to shared volume for cloudflared
+        # 3. Retrieve Tunnel Token & write to shared volume for cloudflared
         token_resp = cf_api(f"/accounts/{account_id}/cfd_tunnel/{tunnel_id}/token", token)
         tunnel_token = token_resp["result"]
 
@@ -206,7 +244,7 @@ def run_sync_logic():
             except Exception as re:
                 add_log(f"Notice restarting cloudflared: {re}")
 
-        # 5. Discover Docker services
+        # 4. Discover Docker services
         services, all_containers = get_docker_containers()
         sync_state["discovered_services"] = services
         sync_state["all_containers"] = all_containers
@@ -214,7 +252,7 @@ def run_sync_logic():
         discovered_names = [f"{s['hostname']} ({s['service']})" for s in services]
         add_log(f"🔍 Discovered Cloudflare-labeled services: {', '.join(discovered_names) if services else 'None'}")
 
-        # 6. Build Cloudflare Tunnel Ingress Rules
+        # 5. Build Cloudflare Tunnel Ingress Rules (Idempotent)
         ingress_rules = []
         for s in services:
             ingress_rules.append({
@@ -223,12 +261,14 @@ def run_sync_logic():
             })
         ingress_rules.append({"service": "http_status:404"})
 
-        cf_api(f"/accounts/{account_id}/cfd_tunnel/{tunnel_id}/configurations", token, method="PUT", data={
-            "config": {"ingress": ingress_rules}
-        })
-        add_log("✅ Updated Cloudflare Tunnel Ingress rules")
+        if sync_state.get("_last_ingress") != ingress_rules:
+            cf_api(f"/accounts/{account_id}/cfd_tunnel/{tunnel_id}/configurations", token, method="PUT", data={
+                "config": {"ingress": ingress_rules}
+            })
+            sync_state["_last_ingress"] = ingress_rules
+            add_log("✅ Updated Cloudflare Tunnel Ingress rules")
 
-        # 7. DNS Records Sync (CNAME per subdomain)
+        # 6. DNS Records Sync (CNAME per subdomain, Idempotent)
         target_cname = f"{tunnel_id}.cfargotunnel.com"
         synced_dns = []
         for s in services:
@@ -243,16 +283,20 @@ def run_sync_logic():
                 "ttl": 1
             }
             if records:
-                rec_id = records[0]["id"]
-                cf_api(f"/zones/{zone_id}/dns_records/{rec_id}", token, method="PUT", data=dns_payload)
+                rec = records[0]
+                rec_id = rec["id"]
+                if rec.get("content") != target_cname or not rec.get("proxied"):
+                    cf_api(f"/zones/{zone_id}/dns_records/{rec_id}", token, method="PUT", data=dns_payload)
+                    add_log(f"🔄 Updated DNS record for {host}")
             else:
                 cf_api(f"/zones/{zone_id}/dns_records", token, method="POST", data=dns_payload)
+                add_log(f"➕ Created DNS record for {host}")
             synced_dns.append({"hostname": host, "target": target_cname, "service": s["service"], "proxied": True})
 
-        # 8. Clean up obsolete CNAME records pointing to this tunnel
+        # 7. Clean up obsolete CNAME records pointing to this tunnel
         active_hostnames = {s["hostname"] for s in services}
         try:
-            all_dns_resp = cf_api(f"/zones/{zone_id}/dns_records?type=CNAME&content={target_cname}", token)
+            all_dns_resp = cf_api(f"/zones/{zone_id}/dns_records?type=CNAME&content={target_cname}&per_page=100", token)
             all_records = all_dns_resp.get("result", [])
             for record in all_records:
                 rec_name = record["name"]
@@ -270,19 +314,25 @@ def run_sync_logic():
     except Exception as e:
         sync_state["status"] = f"Error: {str(e)}"
         add_log(f"❌ Sync Error: {e}")
+    finally:
+        sync_lock.release()
 
 async def sync_loop():
     while True:
         try:
-            run_sync_logic()
+            await asyncio.to_thread(run_sync_logic)
         except Exception as e:
             add_log(f"Loop Exception: {e}")
         poll_interval = int(os.getenv("POLL_INTERVAL", "30"))
         await asyncio.sleep(poll_interval)
 
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(sync_loop())
+@asynccontextmanager
+async def lifespan(fastapi_app: FastAPI):
+    task = asyncio.create_task(sync_loop())
+    yield
+    task.cancel()
+
+app = FastAPI(title="Cloudflare Tunnel & DNS Sync", lifespan=lifespan)
 
 @app.get("/health")
 def health():
@@ -293,8 +343,8 @@ def api_status():
     return JSONResponse(sync_state)
 
 @app.post("/api/sync")
-def api_sync():
-    run_sync_logic()
+async def api_sync():
+    await asyncio.to_thread(run_sync_logic)
     return JSONResponse({"message": "Sync triggered", "state": sync_state})
 
 if __name__ == '__main__':
