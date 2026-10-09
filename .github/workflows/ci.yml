@@ -24,10 +24,13 @@ jobs:
           cache: "pip"
 
       - name: Install Dependencies
-        run: |\n          python -m pip install --upgrade pip\n          pip install -r cf-tunnel-sync/requirements.txt
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r cf-tunnel-sync/requirements.txt
 
       - name: Run Hermetic Unit Tests
-        run: |\n          python -m unittest discover -s cf-tunnel-sync -v
+        run: |
+          python -m unittest discover -s cf-tunnel-sync -v
 
   smoke-tests:
     name: Container Build & Smoke Tests
@@ -38,13 +41,76 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build cf-tunnel-sync Image
-        run: |\n          docker build -t cf-tunnel-sync:test ./cf-tunnel-sync
+        run: |
+          docker build -t cf-tunnel-sync:test ./cf-tunnel-sync
 
       - name: Build cf-tunnel-dashboard Image
-        run: |\n          docker build -t cf-tunnel-dashboard:test ./cf-tunnel-dashboard
+        run: |
+          docker build -t cf-tunnel-dashboard:test ./cf-tunnel-dashboard
 
       - name: Test cf-tunnel-sync Container Boot & Health
-        run: |\n          mkdir -p /tmp/cloudflared-token\n          docker run -d \\\n            --name test-cf-sync \\\n            -p 8090:8090 \\\n            -v /tmp/cloudflared-token:/etc/cloudflared \\\n            cf-tunnel-sync:test\n\n          echo "Waiting for cf-tunnel-sync to boot..."\n          RETRY=0\n          until curl -s -f http://127.0.0.1:8090/health; do\n            RETRY=$((RETRY+1))\n            if [ $RETRY -ge 15 ]; then\n              echo "❌ Healthcheck failed within 30s"\n              docker logs test-cf-sync\n              exit 1\n            fi\n            sleep 2\n          done\n          echo "✅ Healthcheck (/health) passed"\n\n          curl -s -f http://127.0.0.1:8090/healthz || { echo "❌ /healthz failed"; exit 1; }\n          echo "✅ Healthcheck (/healthz) passed"\n\n          echo "Testing SIGTERM graceful shutdown..."\n          docker stop -t 5 test-cf-sync\n          EXIT_CODE=$(docker inspect test-cf-sync --format='{{.State.ExitCode}}')\n          echo "Exit code: $EXIT_CODE"\n          if [ "$EXIT_CODE" -ne 0 ] && [ "$EXIT_CODE" -ne 143 ]; then\n            echo "❌ Non-graceful exit code: $EXIT_CODE"\n            exit 1\n          fi\n          docker rm test-cf-sync\n          echo "✅ Graceful shutdown verified"
+        run: |
+          mkdir -p /tmp/cloudflared-token
+          docker run -d \
+            --name test-cf-sync \
+            -p 8090:8090 \
+            -v /tmp/cloudflared-token:/etc/cloudflared \
+            cf-tunnel-sync:test
+
+          echo "Waiting for cf-tunnel-sync to boot..."
+          RETRY=0
+          until curl -s -f http://127.0.0.1:8090/health; do
+            RETRY=$((RETRY+1))
+            if [ $RETRY -ge 15 ]; then
+              echo "❌ Healthcheck failed within 30s"
+              docker logs test-cf-sync
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "✅ Healthcheck (/health) passed"
+
+          curl -s -f http://127.0.0.1:8090/healthz || { echo "❌ /healthz failed"; exit 1; }
+          echo "✅ Healthcheck (/healthz) passed"
+
+          echo "Testing SIGTERM graceful shutdown..."
+          docker stop -t 5 test-cf-sync
+          EXIT_CODE=$(docker inspect test-cf-sync --format='{{.State.ExitCode}}')
+          echo "Exit code: $EXIT_CODE"
+          if [ "$EXIT_CODE" -ne 0 ] && [ "$EXIT_CODE" -ne 143 ]; then
+            echo "❌ Non-graceful exit code: $EXIT_CODE"
+            exit 1
+          fi
+          docker rm test-cf-sync
+          echo "✅ Graceful shutdown verified"
 
       - name: Test cf-tunnel-dashboard Container Boot & Basic Auth
-        run: |\n          docker run -d \\\n            --name test-cf-dashboard \\\n            -p 8080:8080 \\\n            -e BASIC_AUTH_USERNAME=admin \\\n            -e BASIC_AUTH_PASSWORD=password123 \\\n            cf-tunnel-dashboard:test\n\n          sleep 3\n\n          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080)\n          if [ "$HTTP_CODE" -ne 401 ]; then\n            echo "❌ Expected 401 Unauthorized without auth, got $HTTP_CODE"\n            docker logs test-cf-dashboard\n            exit 1\n          fi\n          echo "✅ Unauthenticated request correctly rejected with 401"\n\n          AUTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" -u admin:password123 http://127.0.0.1:8080)\n          if [ "$AUTH_CODE" -ne 200 ]; then\n            echo "❌ Expected 200 OK with valid credentials, got $AUTH_CODE"\n            docker logs test-cf-dashboard\n            exit 1\n          fi\n          echo "✅ Authenticated request succeeded with 200 OK"\n\n          docker stop test-cf-dashboard\n          docker rm test-cf-dashboard\n          echo "✅ Dashboard smoke test completed successfully"\n
+        run: |
+          docker run -d \
+            --name test-cf-dashboard \
+            -p 8080:80 \
+            -e BASIC_AUTH_USERNAME=admin \
+            -e BASIC_AUTH_PASSWORD=password123 \
+            cf-tunnel-dashboard:test
+
+          sleep 3
+
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080)
+          if [ "$HTTP_CODE" -ne 401 ]; then
+            echo "❌ Expected 401 Unauthorized without auth, got $HTTP_CODE"
+            docker logs test-cf-dashboard
+            exit 1
+          fi
+          echo "✅ Unauthenticated request correctly rejected with 401"
+
+          AUTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" -u admin:password123 http://127.0.0.1:8080)
+          if [ "$AUTH_CODE" -ne 200 ]; then
+            echo "❌ Expected 200 OK with valid credentials, got $AUTH_CODE"
+            docker logs test-cf-dashboard
+            exit 1
+          fi
+          echo "✅ Authenticated request succeeded with 200 OK"
+
+          docker stop test-cf-dashboard
+          docker rm test-cf-dashboard
+          echo "✅ Dashboard smoke test completed successfully"
