@@ -1,0 +1,185 @@
+name: "Daily Docker Image Live Verification"
+
+on:
+  schedule:
+    # Täglich um 04:00 UTC
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image Tag zum Testen (default: latest)"
+        required: true
+        default: "latest"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  verify-live-image:
+    name: "Pull, Run & Verify Live Container"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 1. Pull Docker Image
+        run: |
+          IMAGE_TAG="${{ github.event.inputs.image_tag || 'latest' }}"
+          IMAGE_NAME="hapheus/cf-tunnel-sync:${IMAGE_TAG}"
+          echo "IMAGE=${IMAGE_NAME}" >> $GITHUB_ENV
+          docker pull "${IMAGE_NAME}"
+          docker inspect "${IMAGE_NAME}" --format='Image ID: {{.Id}} Created: {{.Created}}'
+
+      - name: 2. Start Live Container
+        env:
+          CF_TOKEN: ${{ secrets.CF_CANARY_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_CANARY_ACCOUNT_ID }}
+          CF_ZONE: ${{ secrets.CF_CANARY_ZONE }}
+        run: |
+          mkdir -p /tmp/cloudflared-token
+          docker run -d \
+            --name daily-verify-tunnel-sync \
+            -p 8090:8090 \
+            -v /var/run/docker.sock:/var/run/docker.sock:ro \
+            -v /tmp/cloudflared-token:/etc/cloudflared \
+            -e CLOUDFLARE_API_TOKEN="${CF_TOKEN}" \
+            -e CLOUDFLARE_ACCOUNT_ID="${CF_ACCOUNT_ID}" \
+            -e DOMAIN_NAME="${CF_ZONE}" \
+            -e CLOUDFLARE_TUNNEL_NAME="daily-canary-test" \
+            -e SYNC_INTERVAL=10 \
+            "${IMAGE}"
+
+      - name: 3. Healthcheck & Cloudflare Handshake Verification
+        run: |
+          echo "Waiting for container startup and initial sync..."
+          MAX_RETRIES=15
+          RETRY_COUNT=0
+
+          # 3a. Health Endpoint Check
+          until curl -s -f http://127.0.0.1:8090/health; do
+            RETRY_COUNT=$((RETRY_COUNT+1))
+            if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+              echo "❌ Healthcheck failed: Container did not respond on /health within 30s"
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "✅ Healthcheck OK"
+
+          # 3b. Healthz Endpoint Check
+          curl -s -f http://127.0.0.1:8090/healthz || { echo "❌ /healthz failed"; exit 1; }
+          echo "✅ Healthz OK"
+
+          # 3c. Cloudflare Live Handshake Verification
+          if [ -n "${{ secrets.CF_CANARY_API_TOKEN }}" ]; then
+            echo "Checking Cloudflare API Handshake and Token Resolution..."
+            sleep 5
+            STATUS_JSON=$(curl -s http://127.0.0.1:8090/api/status || echo "{}")
+            echo "Live Status Payload: $STATUS_JSON"
+
+            if echo "$STATUS_JSON" | grep -qi "\"status\":\s*\"Error"; then
+              echo "❌ Cloudflare Handshake Error detected in /api/status!"
+              exit 1
+            fi
+
+            # Tunnel-Token Dateiprüfung im Shared Volume
+            if [ -s /tmp/cloudflared-token/token ]; then
+              echo "✅ Cloudflare Tunnel Token successfully generated in shared volume."
+            else
+              echo "❌ Tunnel token file was not written to /etc/cloudflared/token!"
+              exit 1
+            fi
+          else
+            echo "ℹ️ CF_CANARY_API_TOKEN secret not set in repository; skipping live Cloudflare handshake."
+          fi
+
+      - name: 4. Graceful Shutdown Test (SIGTERM)
+        if: always()
+        run: |
+          if docker ps -a --format '{{.Names}}' | grep -q "^daily-verify-tunnel-sync$"; then
+            echo "Stopping container with SIGTERM..."
+            STOP_START=$(date +%s)
+            docker stop -t 5 daily-verify-tunnel-sync
+            STOP_END=$(date +%s)
+            DURATION=$((STOP_END - STOP_START))
+            echo "Container stopped in ${DURATION}s."
+
+            EXIT_CODE=$(docker inspect daily-verify-tunnel-sync --format='{{.State.ExitCode}}')
+            echo "Exit code: $EXIT_CODE"
+            if [ "$EXIT_CODE" -ne 0 ] && [ "$EXIT_CODE" -ne 143 ]; then
+              echo "⚠️ Non-graceful shutdown detected (Exit Code $EXIT_CODE)"
+              exit 1
+            fi
+          fi
+
+      - name: 5. Capture Container Logs
+        if: always()
+        run: |
+          docker logs daily-verify-tunnel-sync > /tmp/container.log 2>&1 || true
+          cat /tmp/container.log
+
+      - name: 6. Upload Logs on Failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-verification-failure-logs
+          path: /tmp/container.log
+
+      - name: 7. Alerting / GitHub Issue Creation on Failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let logExcerpt = 'No logs available.';
+            try {
+              logExcerpt = fs.readFileSync('/tmp/container.log', 'utf8').slice(-1500);
+            } catch (e) {}
+
+            const title = `🚨 Daily Live Verification Failed (${new Date().toISOString().split('T')[0]})`;
+            const body = `### ⚠️ Daily Docker Image Live Verification Failure
+
+            Das Docker-Image **\`${process.env.IMAGE}\`** hat die tägliche Live-Verifikation nicht bestanden.
+
+            **Mögliche Ursachen:**
+            1. Cloudflare API Breaking Change oder API-Downtime.
+            2. Abgelaufenes oder ungültiges Canary API-Token (\`CF_CANARY_API_TOKEN\`).
+            3. Regression im Image-Build oder Container Startup-Fehler.
+
+            **GitHub Actions Run:** [Run Link](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})
+
+            **Log-Auszug:**
+            \`\`\`text
+            ${logExcerpt}
+            \`\`\`
+            `;
+
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: ['incident', 'live-verification']
+            });
+
+            if (issues.data.length > 0) {
+              const existingIssue = issues.data[0];
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existingIssue.number,
+                body: `**Wiederholter Fehler beim täglichen Lauf:**\n${body}`
+              });
+              console.log(`Updated existing issue #${existingIssue.number}`);
+            } else {
+              const newIssue = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: title,
+                body: body,
+                labels: ['incident', 'live-verification', 'bug']
+              });
+              console.log(`Created new alert issue #${newIssue.data.number}`);
+            }

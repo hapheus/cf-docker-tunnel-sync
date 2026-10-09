@@ -21,6 +21,7 @@ class TestAppSyncLogic(unittest.TestCase):
     @patch("app.get_docker_containers")
     @patch("app.docker_api")
     @patch("os.path.exists", return_value=True)
+    @patch("os.makedirs", MagicMock())
     @patch("builtins.open", MagicMock())
     def test_sync_resolves_account_id_from_zone_when_accounts_empty(
         self, mock_exists, mock_docker_api, mock_get_containers, mock_cf_api
@@ -76,6 +77,7 @@ class TestAppSyncLogic(unittest.TestCase):
     @patch("app.get_docker_containers")
     @patch("app.docker_api")
     @patch("os.path.exists", return_value=True)
+    @patch("os.makedirs", MagicMock())
     @patch("builtins.open", MagicMock())
     def test_sync_idempotency_ingress_and_dns(
         self, mock_exists, mock_docker_api, mock_get_containers, mock_cf_api
@@ -158,6 +160,12 @@ class TestAppSyncLogic(unittest.TestCase):
             app.cf_api("/zones", "bad-token")
         self.assertIn("Authentication error", str(ctx.exception))
         self.assertIn("10000", str(ctx.exception))
+
+    def test_health_endpoints(self):
+        """Test that /health and /healthz endpoints return healthy status"""
+        res = app.health()
+        self.assertEqual(res["status"], "healthy")
+        self.assertIn("sync_status", res)
 
 if __name__ == "__main__":
     unittest.main()

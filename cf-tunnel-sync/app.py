@@ -293,18 +293,13 @@ def run_sync_logic():
                 add_log(f"➕ Created DNS record for {host}")
             synced_dns.append({"hostname": host, "target": target_cname, "service": s["service"], "proxied": True})
 
-        # 7. Clean up obsolete CNAME records pointing to this tunnel
-        active_hostnames = {s["hostname"] for s in services}
-        try:
-            all_dns_resp = cf_api(f"/zones/{zone_id}/dns_records?type=CNAME&content={target_cname}&per_page=100", token)
-            all_records = all_dns_resp.get("result", [])
-            for record in all_records:
-                rec_name = record["name"]
-                if rec_name not in active_hostnames:
-                    add_log(f"🧹 Deleting obsolete Cloudflare DNS record: {rec_name}")
-                    cf_api(f"/zones/{zone_id}/dns_records/{record['id']}", token, method="DELETE")
-        except Exception as de:
-            add_log(f"⚠️ Error cleaning up obsolete DNS records: {de}")
+        # 7. Cleanup obsolete DNS records
+        all_dns = cf_api(f"/zones/{zone_id}/dns_records?type=CNAME&content={target_cname}", token)
+        current_hosts = {s["hostname"] for s in services}
+        for rec in all_dns.get("result", []):
+            if rec["name"] not in current_hosts:
+                cf_api(f"/zones/{zone_id}/dns_records/{rec['id']}", token, method="DELETE")
+                add_log(f"🗑️ Deleted obsolete DNS record for {rec['name']}")
 
         sync_state["dns_records"] = synced_dns
         sync_state["status"] = "Active / Synced"
@@ -312,8 +307,8 @@ def run_sync_logic():
         add_log("🎉 Sync completed successfully!")
 
     except Exception as e:
-        sync_state["status"] = f"Error: {str(e)}"
         add_log(f"❌ Sync Error: {e}")
+        sync_state["status"] = f"Error: {e}"
     finally:
         sync_lock.release()
 
@@ -322,9 +317,8 @@ async def sync_loop():
         try:
             await asyncio.to_thread(run_sync_logic)
         except Exception as e:
-            add_log(f"Loop Exception: {e}")
-        poll_interval = int(os.getenv("POLL_INTERVAL", "30"))
-        await asyncio.sleep(poll_interval)
+            add_log(f"Unexpected loop exception: {e}")
+        await asyncio.sleep(int(os.getenv("SYNC_INTERVAL", 30)))
 
 @asynccontextmanager
 async def lifespan(fastapi_app: FastAPI):
@@ -335,6 +329,7 @@ async def lifespan(fastapi_app: FastAPI):
 app = FastAPI(title="Cloudflare Tunnel & DNS Sync", lifespan=lifespan)
 
 @app.get("/health")
+@app.get("/healthz")
 def health():
     return {"status": "healthy", "sync_status": sync_state["status"]}
 
