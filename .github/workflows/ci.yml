@@ -116,13 +116,25 @@ jobs:
           docker run -d \
             --name test-cf-dashboard \
             -p 8080:80 \
+            --add-host cf-tunnel-sync:127.0.0.1 \
             -e BASIC_AUTH_USERNAME=admin \
             -e BASIC_AUTH_PASSWORD=password123 \
             cf-tunnel-dashboard:test
 
-          sleep 3
+          echo "Waiting for dashboard to boot..."
+          RETRY=0
+          until curl -s -f http://127.0.0.1:8080/health; do
+            RETRY=$((RETRY+1))
+            if [ $RETRY -ge 15 ]; then
+              echo "❌ Dashboard healthcheck failed within 30s"
+              docker logs test-cf-dashboard
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "✅ Dashboard healthcheck passed"
 
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080)
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080 || true)
           if [ "$HTTP_CODE" -ne 401 ]; then
             echo "❌ Expected 401 Unauthorized without auth, got $HTTP_CODE"
             docker logs test-cf-dashboard
@@ -130,7 +142,7 @@ jobs:
           fi
           echo "✅ Unauthenticated request correctly rejected with 401"
 
-          AUTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" -u admin:password123 http://127.0.0.1:8080)
+          AUTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" -u admin:password123 http://127.0.0.1:8080 || true)
           if [ "$AUTH_CODE" -ne 200 ]; then
             echo "❌ Expected 200 OK with valid credentials, got $AUTH_CODE"
             docker logs test-cf-dashboard
