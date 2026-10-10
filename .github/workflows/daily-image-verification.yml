@@ -2,14 +2,20 @@ name: "Daily Docker Image Live Verification"
 
 on:
   schedule:
-    # Täglich um 04:00 UTC
+    # Daily at 04:00 UTC
     - cron: '0 4 * * *'
   workflow_dispatch:
     inputs:
       image_tag:
-        description: "Image Tag zum Testen (default: latest)"
+        description: "Image tag to test (default: latest)"
         required: true
         default: "latest"
+  workflow_run:
+    workflows: ["Build and Publish Docker Image"]
+    types:
+      - completed
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -20,10 +26,20 @@ jobs:
     name: "Pull, Run & Verify Live Container"
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub (Rate Limit Prevention)
+        if: env.DOCKERHUB_USERNAME != ''
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
 
       - name: 1. Pull Docker Image
         run: |
@@ -85,7 +101,7 @@ jobs:
               exit 1
             fi
 
-            # Tunnel-Token Dateiprüfung im Shared Volume
+            # Tunnel token file verification in shared volume
             if [ -s /tmp/cloudflared-token/token ]; then
               echo "✅ Cloudflare Tunnel Token successfully generated in shared volume."
             else
@@ -140,22 +156,17 @@ jobs:
             } catch (e) {}
 
             const title = `🚨 Daily Live Verification Failed (${new Date().toISOString().split('T')[0]})`;
-            const body = `### ⚠️ Daily Docker Image Live Verification Failure
-
-            Das Docker-Image **\`${process.env.IMAGE}\`** hat die tägliche Live-Verifikation nicht bestanden.
-
-            **Mögliche Ursachen:**
-            1. Cloudflare API Breaking Change oder API-Downtime.
-            2. Abgelaufenes oder ungültiges Canary API-Token (\`CF_CANARY_API_TOKEN\`).
-            3. Regression im Image-Build oder Container Startup-Fehler.
-
-            **GitHub Actions Run:** [Run Link](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})
-
-            **Log-Auszug:**
-            \`\`\`text
-            ${logExcerpt}
-            \`\`\`
-            `;
+            const body = `### ⚠️ Daily Docker Image Live Verification Failure\n\n` +
+              `The Docker image **\`${process.env.IMAGE}\`** failed the daily live verification check.\n\n` +
+              `**Possible Causes:**\n` +
+              `1. Cloudflare API breaking change or API downtime.\n` +
+              `2. Expired or invalid Canary API token (\`CF_CANARY_API_TOKEN\`).\n` +
+              `3. Regression in image build or container startup failure.\n\n` +
+              `**GitHub Actions Run:** [Run Link](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})\n\n` +
+              `**Log Excerpt:**\n` +
+              `\`\`\`text\n` +
+              `${logExcerpt}\n` +
+              `\`\`\`\n`;
 
             const issues = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
@@ -170,7 +181,7 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: existingIssue.number,
-                body: `**Wiederholter Fehler beim täglichen Lauf:**\n${body}`
+                body: `**Repeated failure in live verification run:**\n${body}`
               });
               console.log(`Updated existing issue #${existingIssue.number}`);
             } else {
