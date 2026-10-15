@@ -1,0 +1,13 @@
+services:
+  api:
+    image: kennethreitz/httpbin
+    restart: always
+    labels:
+      - "cf.tunnel.hostname=${SUBDOMAIN:-api}.${DOMAIN_NAME}"
+      - "cf.tunnel.port=80"
+    networks:
+      - cf-tunnel-net
+
+networks:
+  cf-tunnel-net:
+    external: true

@@ -2,7 +2,7 @@ services:
   cloudflared:
     image: cloudflare/cloudflared:latest
     restart: always
-    command: tunnel --no-autoupdate run --token-file /etc/cloudflared/token
+    command: tunnel --no-autoupdate --protocol ${CLOUDFLARED_PROTOCOL:-auto} run --token-file /etc/cloudflared/token
     volumes:
       - cf_token_data:/etc/cloudflared
     networks:
