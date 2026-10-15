@@ -167,5 +167,130 @@ class TestAppSyncLogic(unittest.TestCase):
         self.assertEqual(res["status"], "healthy")
         self.assertIn("sync_status", res)
 
+    @patch("app.docker_api")
+    def test_get_docker_containers_filters_by_domain(self, mock_docker_api):
+        """Only containers matching DOMAIN_NAME should be included in discovered services"""
+        mock_docker_api.return_value = [
+            {
+                "Names": ["/matching-subdomain"],
+                "State": "running",
+                "Labels": {"cf.tunnel.hostname": "api.example.com", "cf.tunnel.port": "8000"},
+            },
+            {
+                "Names": ["/matching-apex"],
+                "State": "running",
+                "Labels": {"cf.tunnel.hostname": "example.com", "cf.tunnel.port": "80"},
+            },
+            {
+                "Names": ["/other-domain"],
+                "State": "running",
+                "Labels": {"cf.tunnel.hostname": "service.otherdomain.org", "cf.tunnel.port": "3000"},
+            },
+            {
+                "Names": ["/false-suffix-domain"],
+                "State": "running",
+                "Labels": {"cf.tunnel.hostname": "notexample.com", "cf.tunnel.port": "80"},
+            },
+        ]
+
+        with patch.dict(os.environ, {"DOMAIN_NAME": "example.com"}, clear=True):
+            services, all_containers = app.get_docker_containers()
+
+        service_hosts = [s["hostname"] for s in services]
+        self.assertIn("api.example.com", service_hosts)
+        self.assertIn("example.com", service_hosts)
+        self.assertNotIn("service.otherdomain.org", service_hosts)
+        self.assertNotIn("notexample.com", service_hosts)
+
+    @patch("app.docker_api")
+    def test_get_docker_containers_filters_by_tunnel_name_label(self, mock_docker_api):
+        """If cf.tunnel.name label is set, only containers matching CLOUDFLARE_TUNNEL_NAME should be included"""
+        mock_docker_api.return_value = [
+            {
+                "Names": ["/matching-tunnel"],
+                "State": "running",
+                "Labels": {
+                    "cf.tunnel.hostname": "app1.example.com",
+                    "cf.tunnel.name": "tunnel-a",
+                },
+            },
+            {
+                "Names": ["/other-tunnel"],
+                "State": "running",
+                "Labels": {
+                    "cf.tunnel.hostname": "app2.example.com",
+                    "cf.tunnel.name": "tunnel-b",
+                },
+            },
+            {
+                "Names": ["/no-tunnel-label"],
+                "State": "running",
+                "Labels": {
+                    "cf.tunnel.hostname": "app3.example.com",
+                },
+            },
+        ]
+
+        with patch.dict(
+            os.environ,
+            {"DOMAIN_NAME": "example.com", "CLOUDFLARE_TUNNEL_NAME": "tunnel-a"},
+            clear=True,
+        ):
+            services, _ = app.get_docker_containers()
+
+        service_hosts = [s["hostname"] for s in services]
+        self.assertIn("app1.example.com", service_hosts)
+        self.assertNotIn("app2.example.com", service_hosts)
+        self.assertIn("app3.example.com", service_hosts)
+
+    def test_find_cloudflared_container_name_with_env(self):
+        """CLOUDFLARED_CONTAINER_NAME env var should override discovery"""
+        with patch.dict(os.environ, {"CLOUDFLARED_CONTAINER_NAME": "my-custom-cf"}, clear=True):
+            name = app.find_cloudflared_container_name()
+            self.assertEqual(name, "my-custom-cf")
+
+    @patch("app.docker_api")
+    def test_find_cloudflared_container_name_auto_discovery(self, mock_docker_api):
+        """Auto-discovers sibling cloudflared in the same Docker Compose project"""
+        mock_docker_api.return_value = [
+            {
+                "Id": "sync123456789",
+                "Names": ["/proj-a-cf-tunnel-sync-1"],
+                "Labels": {
+                    "com.docker.compose.project": "proj-a",
+                    "com.docker.compose.service": "cf-tunnel-sync",
+                },
+            },
+            {
+                "Id": "cf123456789",
+                "Names": ["/proj-a-cloudflared-1"],
+                "Labels": {
+                    "com.docker.compose.project": "proj-a",
+                    "com.docker.compose.service": "cloudflared",
+                },
+            },
+            {
+                "Id": "cf987654321",
+                "Names": ["/proj-b-cloudflared-1"],
+                "Labels": {
+                    "com.docker.compose.project": "proj-b",
+                    "com.docker.compose.service": "cloudflared",
+                },
+            },
+        ]
+
+        with patch.dict(os.environ, {"HOSTNAME": "sync123456789"}, clear=True):
+            name = app.find_cloudflared_container_name()
+            self.assertEqual(name, "proj-a-cloudflared-1")
+
+    @patch("app.docker_api")
+    def test_find_cloudflared_container_name_fallback(self, mock_docker_api):
+        """Falls back to 'cloudflared' if discovery yields no results"""
+        mock_docker_api.return_value = []
+        with patch.dict(os.environ, {}, clear=True):
+            name = app.find_cloudflared_container_name()
+            self.assertEqual(name, "cloudflared")
+
 if __name__ == "__main__":
     unittest.main()
+

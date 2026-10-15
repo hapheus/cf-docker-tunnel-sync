@@ -67,14 +67,13 @@ BASIC_AUTH_USERNAME=choose_a_username
 BASIC_AUTH_PASSWORD=choose_a_long_random_password
 ```
 
-### 2. Run the Stack
+### 2. Run the Central Gateway Stack
 Create a `docker-compose.yml` file:
 
 ```yaml
 services:
   cloudflared:
     image: cloudflare/cloudflared:latest
-    container_name: cloudflared
     restart: always
     command: tunnel --no-autoupdate run --token-file /etc/cloudflared/token
     volumes:
@@ -86,13 +85,13 @@ services:
 
   cf-tunnel-sync:
     image: hapheus/cf-tunnel-sync:latest
-    container_name: cf-tunnel-sync
     restart: always
     environment:
       - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}
       - DOMAIN_NAME=${DOMAIN_NAME}
       - CLOUDFLARE_TUNNEL_NAME=${CLOUDFLARE_TUNNEL_NAME:-cf-docker-tunnel-sync}
       - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-}
+      - CLOUDFLARED_CONTAINER_NAME=${CLOUDFLARED_CONTAINER_NAME:-}
       - POLL_INTERVAL=30
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -111,7 +110,6 @@ services:
 
   cf-tunnel-dashboard:
     image: hapheus/cf-tunnel-dashboard:latest
-    container_name: cf-tunnel-dashboard
     restart: always
     environment:
       - DASHBOARD_AUTH_ENABLED=${DASHBOARD_AUTH_ENABLED:-true}
@@ -137,6 +135,7 @@ services:
 
 networks:
   cf-tunnel-net:
+    name: ${CF_NETWORK_NAME:-cf-tunnel-net}
     driver: bridge
 
 volumes:
@@ -177,27 +176,65 @@ Keep authentication enabled and consider an additional Cloudflare Access policy 
 
 ---
 
-## 🐳 Step 3: Exposing Other Containers
+## 🐳 Step 3: Exposing Other Containers (Multi-Compose Setup)
 
-To expose any other container in the same Docker network, simply add the routing labels to its service definition:
+`cf-docker-tunnel-sync` acts as a **central gateway** for your entire Docker host (like Traefik or Nginx Proxy Manager). You do **not** run a separate `cf-docker-tunnel-sync` inside every project.
+
+Instead, keep your application in its own `docker-compose.yml` and attach it to the central `cf-tunnel-net` network:
 
 ```yaml
 services:
   my-app:
     image: nginx:alpine
-    container_name: my-app
+    # Note: container_name is optional. Docker Compose automatically assigns unique names.
     labels:
       - "cf.tunnel.hostname=app.${DOMAIN_NAME}"
       - "cf.tunnel.port=80"
     networks:
       - cf-tunnel-net
+
+networks:
+  cf-tunnel-net:
+    external: true
 ```
 
-- **`cf.tunnel.hostname`**: The public domain name you want to use.
-- **`cf.tunnel.port`**: The internal port the container listens on (e.g. `80` for Nginx, `5678` for n8n).
+- **`cf.tunnel.hostname`**: The public domain name you want to route to this container.
+- **`cf.tunnel.port`**: The internal container port (e.g. `80` for Nginx, `8080`, `3000`).
+- **`cf.tunnel.name`** *(Optional)*: Explicitly bind the container to a specific tunnel name (useful for multi-tunnel setups on the same domain).
 
 > [!IMPORTANT]
-> The target container must be in the same Docker network as `cf-tunnel-sync` and `cloudflared` (in this case `cf-tunnel-net`) so `cloudflared` can resolve the container's IP using its name.
+> The target container must join `cf-tunnel-net` (`external: true`) so `cloudflared` can reach it via internal Docker DNS.
+
+---
+
+## 🌐 Multi-Account & Multi-Domain Setups
+
+What if you have multiple services belonging to **different Cloudflare accounts or different domains** on the same server?
+
+`cf-docker-tunnel-sync` supports running multiple tunnel stacks side-by-side cleanly:
+
+1. **Automated Domain Scoping:**
+   Each `cf-tunnel-sync` instance automatically filters discovered containers against its configured `DOMAIN_NAME`.
+   - A tunnel configured for `company.com` will only manage `*.company.com`.
+   - A tunnel configured for `personal.me` will only manage `*.personal.me`.
+   They will never interfere with or overwrite each other's DNS records or ingress rules.
+
+2. **Project & Volume Isolation:**
+   Run each tunnel stack in its own directory (e.g. `/opt/tunnels/company/` and `/opt/tunnels/personal/`). Docker Compose automatically isolates named volumes and container names.
+
+3. **Separate Networks & Ports:**
+   In `.env` of your second stack:
+   ```env
+   DOMAIN_NAME=otherdomain.com
+   CLOUDFLARE_API_TOKEN=token_for_other_account
+   CLOUDFLARE_TUNNEL_NAME=other-tunnel
+   CF_NETWORK_NAME=cf-tunnel-net-other
+   DASHBOARD_PORT=8081
+   ```
+   Services intended for `otherdomain.com` then simply join `cf-tunnel-net-other` as an external network.
+
+4. **Optional Tunnel Pinning:**
+   If you run multiple tunnels for the same domain (e.g., staging vs. prod), attach the label `cf.tunnel.name=my-tunnel-name` to your application container to route it strictly through that specific tunnel.
 
 ---
 
@@ -206,14 +243,13 @@ services:
 If you have a service running directly on your host machine (outside Docker) and you want to expose it through the tunnel, you can do this by using a **dummy container** as a bridge.
 
 1. **How it works:**
-   Since `cf-tunnel-sync` only scans Docker containers, you start a lightweight "bridge" container that holds the labels. You tell `cf-tunnel-sync` to route traffic to the special address `host.docker.internal` (which represents your host machine) using the `cf.tunnel.service` label.
+   Since `cf-tunnel-sync` scans Docker containers, start a lightweight bridge container with labels pointing traffic to `host.docker.internal` using `cf.tunnel.service`.
 
 2. **Add a Bridge Service to your Compose file:**
    ```yaml
    services:
      host-app-bridge:
        image: alpine
-       container_name: host-app-bridge
        command: sleep infinity
        restart: always
        labels:
@@ -221,6 +257,10 @@ If you have a service running directly on your host machine (outside Docker) and
          - "cf.tunnel.service=http://host.docker.internal:8080" # Port running on your host OS
        networks:
          - cf-tunnel-net
+
+   networks:
+     cf-tunnel-net:
+       external: true
    ```
 
 *Note: The `extra_hosts` mapping `host.docker.internal:host-gateway` is already configured in the `cloudflared` compose service by default to make this work on Linux/Raspberry Pi.*
@@ -231,17 +271,21 @@ If you have a service running directly on your host machine (outside Docker) and
 
 | Variable | Description | Default | Required |
 |---|---|---|---|
-| `DOMAIN_NAME` | Root domain managed on Cloudflare (e.g., `example.com`). | - | Yes |
+| `DOMAIN_NAME` | Root domain managed on Cloudflare (e.g., `example.com`). Used for automated domain scoping. | - | Yes |
 | `CLOUDFLARE_API_TOKEN` | API Token created in Step 1. | - | Yes |
 | `CLOUDFLARE_TUNNEL_NAME` | The name for the Cloudflare Tunnel. | `cf-docker-tunnel-sync` | No |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account ID; auto-detected from zone if left empty. | - | No |
+| `CF_NETWORK_NAME` | Docker network name created by the stack. Useful to change for multi-stack setups. | `cf-tunnel-net` | No |
+| `CLOUDFLARED_CONTAINER_NAME` | Specific name or ID of the `cloudflared` container to restart; auto-detected if empty. | - | No |
 | `POLL_INTERVAL` | Docker socket scan interval in seconds. | `30` | No |
 | `DASHBOARD_AUTH_ENABLED` | Enable Basic Authentication for the dashboard (`true` or `false`). | `true` | No |
 | `BASIC_AUTH_USERNAME` | Dashboard username; required when authentication is enabled. | - | Conditional |
 | `BASIC_AUTH_PASSWORD` | Dashboard password; required when authentication is enabled. | - | Conditional |
 | `DASHBOARD_BIND_ADDRESS` | Address used for the dashboard host port; set to `127.0.0.1` for local-only access. | `0.0.0.0` | No |
-| `DASHBOARD_PORT` | Dashboard host port. | `8080` | No |
+| `DASHBOARD_PORT` | Dashboard host port. Change when running multiple stacks on one host. | `8080` | No |
 
 ---
+
 
 ## 💝 Support the Project
 
