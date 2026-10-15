@@ -95,9 +95,51 @@ def cf_api(endpoint: str, token: str, method: str = 'GET', data: dict = None) ->
             pass
         raise RuntimeError(f"Cloudflare HTTP {e.code}: {err_body}") from None
 
+def find_cloudflared_container_name() -> str:
+    """Resolve the cloudflared container name or ID dynamically."""
+    explicit_name = os.getenv("CLOUDFLARED_CONTAINER_NAME", "").strip()
+    if explicit_name:
+        return explicit_name
+
+    try:
+        containers = docker_api('/containers/json?all=true')
+        if isinstance(containers, list):
+            my_hostname = os.getenv("HOSTNAME", "").strip()
+            current_project = None
+            if my_hostname:
+                for c in containers:
+                    c_id = c.get('Id', '')
+                    c_names = [n.lstrip('/') for n in c.get('Names', [])]
+                    if c_id.startswith(my_hostname) or my_hostname in c_names:
+                        current_project = c.get('Labels', {}).get('com.docker.compose.project')
+                        break
+
+            for c in containers:
+                labels = c.get('Labels', {})
+                service = labels.get('com.docker.compose.service')
+                project = labels.get('com.docker.compose.project')
+                if service == 'cloudflared':
+                    if current_project and project == current_project:
+                        c_names = c.get('Names', [])
+                        if c_names:
+                            return c_names[0].lstrip('/')
+                        return c.get('Id', 'cloudflared')
+                    elif not current_project:
+                        c_names = c.get('Names', [])
+                        if c_names:
+                            return c_names[0].lstrip('/')
+                        return c.get('Id', 'cloudflared')
+    except Exception as e:
+        logger.warning(f"Error resolving cloudflared container: {e}")
+
+    return "cloudflared"
+
 def get_docker_containers() -> tuple[List[Dict[str, str]], List[Dict[str, str]]]:
     services = []
     all_containers = []
+    configured_domain = get_domain_name().lower()
+    configured_tunnel_name = os.getenv("CLOUDFLARE_TUNNEL_NAME", "cf-docker-tunnel-sync").strip()
+
     try:
         containers = docker_api('/containers/json?all=true')
         if isinstance(containers, list):
@@ -109,14 +151,25 @@ def get_docker_containers() -> tuple[List[Dict[str, str]], List[Dict[str, str]]]
                 status_text = c.get('Status', '')
                 image = c.get('Image', '')
 
-                hostname = labels.get('cf.tunnel.hostname') or labels.get('cf.tunnel.domain') or labels.get('cloudflared.hostname')
-                if hostname:
-                    hostname = hostname.strip()
+                raw_hostname = labels.get('cf.tunnel.hostname') or labels.get('cf.tunnel.domain') or labels.get('cloudflared.hostname')
+                hostname = raw_hostname.strip() if raw_hostname else ""
+
+                # Domain scoping: only match if hostname belongs to configured DOMAIN_NAME
+                matches_domain = True
+                if configured_domain and hostname:
+                    h_lower = hostname.lower()
+                    matches_domain = (h_lower == configured_domain) or (h_lower.endswith("." + configured_domain))
+
+                # Optional tunnel scoping: if cf.tunnel.name is set, verify it matches CLOUDFLARE_TUNNEL_NAME
+                target_tunnel = labels.get('cf.tunnel.name') or labels.get('cf.tunnel.tunnel')
+                matches_tunnel = True
+                if target_tunnel:
+                    matches_tunnel = (target_tunnel.strip() == configured_tunnel_name)
 
                 is_tunneled = False
                 service_url = ""
 
-                if hostname and state == "running":
+                if hostname and state == "running" and matches_domain and matches_tunnel:
                     is_tunneled = True
                     service_url = labels.get('cf.tunnel.service')
                     port = labels.get('cf.tunnel.port')
@@ -148,6 +201,7 @@ def get_docker_containers() -> tuple[List[Dict[str, str]], List[Dict[str, str]]]
     except Exception as e:
         add_log(f"Docker API Error: {e}")
     return services, all_containers
+
 
 def run_sync_logic():
     if not sync_lock.acquire(blocking=False):
@@ -239,8 +293,9 @@ def run_sync_logic():
             add_log("🔑 Updated Cloudflare Tunnel Token in shared volume")
             
             try:
-                docker_api('/containers/cloudflared/restart', method='POST')
-                add_log("🔄 Triggered restart for cloudflared container")
+                cf_target = find_cloudflared_container_name()
+                docker_api(f'/containers/{cf_target}/restart', method='POST')
+                add_log(f"🔄 Triggered restart for cloudflared container ({cf_target})")
             except Exception as re:
                 add_log(f"Notice restarting cloudflared: {re}")
 

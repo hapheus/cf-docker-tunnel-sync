@@ -26,7 +26,6 @@ Then create `docker-compose.yml`:
 services:
   cloudflared:
     image: cloudflare/cloudflared:latest
-    container_name: cloudflared
     restart: always
     command: tunnel --no-autoupdate run --token-file /etc/cloudflared/token
     volumes:
@@ -38,7 +37,6 @@ services:
 
   cf-tunnel-sync:
     image: hapheus/cf-tunnel-sync:latest
-    container_name: cf-tunnel-sync
     restart: always
     environment:
       - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}
@@ -61,6 +59,7 @@ services:
 
 networks:
   cf-tunnel-net:
+    name: ${CF_NETWORK_NAME:-cf-tunnel-net}
     driver: bridge
 
 volumes:

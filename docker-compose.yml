@@ -1,7 +1,6 @@
 services:
   cloudflared:
     image: cloudflare/cloudflared:latest
-    container_name: cloudflared
     restart: always
     command: tunnel --no-autoupdate run --token-file /etc/cloudflared/token
     volumes:
@@ -16,13 +15,13 @@ services:
     build:
       context: ./cf-tunnel-sync
       dockerfile: Dockerfile
-    container_name: cf-tunnel-sync
     restart: always
     environment:
       - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}
       - DOMAIN_NAME=${DOMAIN_NAME}
       - CLOUDFLARE_TUNNEL_NAME=${CLOUDFLARE_TUNNEL_NAME:-cf-docker-tunnel-sync}
       - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-}
+      - CLOUDFLARED_CONTAINER_NAME=${CLOUDFLARED_CONTAINER_NAME:-}
       - POLL_INTERVAL=30
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -45,7 +44,6 @@ services:
     build:
       context: ./cf-tunnel-dashboard
       dockerfile: Dockerfile
-    container_name: cf-tunnel-dashboard
     restart: always
     environment:
       - DASHBOARD_AUTH_ENABLED=${DASHBOARD_AUTH_ENABLED:-true}
@@ -72,7 +70,6 @@ services:
   # Example Service (uncomment to test)
   # web-example:
   #   image: nginx:alpine
-  #   container_name: web-example
   #   labels:
   #     - "cf.tunnel.hostname=hello.${DOMAIN_NAME}"
   #     - "cf.tunnel.port=80"
@@ -81,7 +78,9 @@ services:
 
 networks:
   cf-tunnel-net:
+    name: ${CF_NETWORK_NAME:-cf-tunnel-net}
     driver: bridge
 
 volumes:
   cf_token_data:
+
