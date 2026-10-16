@@ -805,15 +805,24 @@ app = FastAPI(title="Cloudflare Tunnel & DNS Sync", lifespan=lifespan)
 
 @app.get("/health")
 @app.get("/healthz")
-def health(response: Response = None):
+def health():
     docker_ok = sync_state.get("docker_connected", True)
-    status_str = "healthy" if docker_ok else "unhealthy"
-    if response and not docker_ok:
-        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    status_str = "healthy" if docker_ok else "degraded"
     return {
         "status": status_str,
         "docker_connected": docker_ok,
-        "sync_status": sync_state["status"]
+        "sync_status": sync_state.get("status")
+    }
+
+@app.get("/ready")
+def ready(response: Response = None):
+    docker_ok = sync_state.get("docker_connected", True)
+    if not docker_ok and response:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    return {
+        "status": "ready" if docker_ok else "not ready",
+        "docker_connected": docker_ok,
+        "sync_status": sync_state.get("status")
     }
 
 @app.get("/api/status")

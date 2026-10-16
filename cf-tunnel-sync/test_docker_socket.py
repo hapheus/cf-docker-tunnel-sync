@@ -74,28 +74,36 @@ class TestResilientDockerSocket(unittest.TestCase):
         self.assertFalse(app.sync_state["docker_connected"])
 
     def test_health_endpoint_healthy_state(self):
-        """Verify /health returns 200 and healthy when docker_connected=True."""
+        """Verify /health returns healthy when docker_connected=True."""
         app.sync_state["docker_connected"] = True
         app.sync_state["status"] = "Active / Synced"
 
-        resp = Response()
-        data = app.health(resp)
-
+        data = app.health()
         self.assertEqual(data["status"], "healthy")
         self.assertTrue(data["docker_connected"])
-        self.assertEqual(resp.status_code, 200)
 
     def test_health_endpoint_degraded_state(self):
-        """Verify /health returns 503 and unhealthy when docker_connected=False."""
+        """Verify /health reports degraded status when docker_connected=False."""
         app.sync_state["docker_connected"] = False
         app.sync_state["status"] = "Docker connection degraded"
 
-        resp = Response()
-        data = app.health(resp)
-
-        self.assertEqual(data["status"], "unhealthy")
+        data = app.health()
+        self.assertEqual(data["status"], "degraded")
         self.assertFalse(data["docker_connected"])
-        self.assertEqual(resp.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    def test_ready_endpoint_status_codes(self):
+        """Verify /ready returns 200 when connected and 503 when degraded."""
+        app.sync_state["docker_connected"] = True
+        resp_ok = Response()
+        res_ok = app.ready(resp_ok)
+        self.assertEqual(res_ok["status"], "ready")
+        self.assertEqual(resp_ok.status_code, 200)
+
+        app.sync_state["docker_connected"] = False
+        resp_err = Response()
+        res_err = app.ready(resp_err)
+        self.assertEqual(res_err["status"], "not ready")
+        self.assertEqual(resp_err.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
 
     @patch("builtins.open", MagicMock())
     @patch("os.makedirs", MagicMock())
