@@ -1071,15 +1071,37 @@ def get_dashboard(authenticated: bool = Depends(check_dashboard_auth)):
     )
 
 
+def sanitize_sync_state(data: Any) -> Any:
+    """Return a safely JSON-serializable public representation of sync state.
+
+    Excludes internal private keys (starting with '_') from dictionaries and
+    recursively converts non-serializable collections (such as set and frozenset)
+    into sorted lists.
+    """
+    if isinstance(data, dict):
+        items = list(data.items())
+        return {k: sanitize_sync_state(v) for k, v in items if not k.startswith("_")}
+    elif isinstance(data, (set, frozenset)):
+        items = list(data)
+        try:
+            return sorted(sanitize_sync_state(x) for x in items)
+        except TypeError:
+            return [sanitize_sync_state(x) for x in items]
+    elif isinstance(data, (list, tuple)):
+        items = list(data)
+        return [sanitize_sync_state(x) for x in items]
+    return data
+
+
 @app.get("/api/status")
 def api_status(authenticated: bool = Depends(check_dashboard_auth)):
-    return JSONResponse(sync_state)
+    return JSONResponse(sanitize_sync_state(sync_state))
 
 
 @app.post("/api/sync")
 async def api_sync(authenticated: bool = Depends(check_dashboard_auth)):
     await asyncio.to_thread(run_sync_logic)
-    return JSONResponse({"message": "Sync triggered", "state": sync_state})
+    return JSONResponse({"message": "Sync triggered", "state": sanitize_sync_state(sync_state)})
 
 
 if __name__ == "__main__":
