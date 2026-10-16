@@ -163,19 +163,25 @@ class DebouncedSyncTrigger:
         self.delay = delay
         self.max_delay = max_delay
         self.sync_target = sync_target
-        self._timer_task: Optional[asyncio.Task] = None
-        self._first_event_time: Optional[float] = None
+        self._worker_task: Optional[asyncio.Task] = None
+        self._deadline: Optional[float] = None
+        self._max_deadline: Optional[float] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._lock = threading.Lock()
+        self._reasons: List[str] = []
 
     def set_loop(self, loop: asyncio.AbstractEventLoop):
         self._loop = loop
 
     def trigger(self, reason: str = ""):
         with self._lock:
-            now = time.time()
-            if self._first_event_time is None:
-                self._first_event_time = now
+            now = time.monotonic()
+            if self._max_deadline is None:
+                self._max_deadline = now + self.max_delay
+            self._deadline = min(now + self.delay, self._max_deadline)
+
+            if reason:
+                self._reasons.append(reason)
 
             target_loop = self._loop
             if target_loop is None or not target_loop.is_running():
@@ -185,35 +191,51 @@ class DebouncedSyncTrigger:
                     pass
 
             if target_loop and target_loop.is_running():
-                target_loop.call_soon_threadsafe(self._schedule_debounce, reason)
+                target_loop.call_soon_threadsafe(self._ensure_worker)
 
-    def _schedule_debounce(self, reason: str):
-        now = time.time()
-        if self._timer_task and not self._timer_task.done():
-            if self._first_event_time and (now - self._first_event_time) >= self.max_delay:
-                return
-            self._timer_task.cancel()
+    def _ensure_worker(self):
+        with self._lock:
+            if self._worker_task is None or self._worker_task.done():
+                self._worker_task = asyncio.create_task(self._coalescing_worker())
 
-        self._timer_task = asyncio.create_task(self._debounce_coro(reason))
-
-    async def _debounce_coro(self, reason: str):
-        try:
-            await asyncio.sleep(self.delay)
+    async def _coalescing_worker(self):
+        while True:
             with self._lock:
-                self._first_event_time = None
-            add_log(f"Debounce window elapsed ({self.delay}s), executing sync: {reason}")
-            if self.sync_target:
-                if asyncio.iscoroutinefunction(self.sync_target):
-                    await self.sync_target()
+                now = time.monotonic()
+                if self._deadline is None:
+                    break
+                remaining = self._deadline - now
+
+            if remaining > 0:
+                try:
+                    await asyncio.sleep(remaining)
+                except asyncio.CancelledError:
+                    return
+
+            with self._lock:
+                now = time.monotonic()
+                if self._deadline is not None and (self._deadline - now) > 0.005:
+                    continue
+                reasons_copy = list(self._reasons)
+                self._deadline = None
+                self._max_deadline = None
+                self._reasons.clear()
+
+            reason_str = ", ".join(reasons_copy[-3:]) if reasons_copy else "event trigger"
+            add_log(f"Debounce window elapsed ({self.delay}s), executing sync: {reason_str}")
+            try:
+                if self.sync_target:
+                    if asyncio.iscoroutinefunction(self.sync_target):
+                        await self.sync_target()
+                    else:
+                        await asyncio.to_thread(self.sync_target)
                 else:
-                    await asyncio.to_thread(self.sync_target)
-            else:
-                await asyncio.to_thread(run_sync_logic)
-        except asyncio.CancelledError:
-            pass
+                    await asyncio.to_thread(run_sync_logic)
+            except Exception as e:
+                logger.error(f"Error during debounced sync: {e}")
 
 
-DEBOUNCE_DELAY = float(os.getenv("SYNC_DEBOUNCE_DELAY", 2.5))
+DEBOUNCE_DELAY = float(os.getenv("SYNC_DEBOUNCE_SECONDS", os.getenv("SYNC_DEBOUNCE_DELAY", 2.5)))
 DEBOUNCE_MAX_DELAY = float(os.getenv("SYNC_DEBOUNCE_MAX_DELAY", 10.0))
 debouncer = DebouncedSyncTrigger(delay=DEBOUNCE_DELAY, max_delay=DEBOUNCE_MAX_DELAY)
 
@@ -278,23 +300,26 @@ def listen_docker_events(
             backoff = 1.0
             add_log("Connected to Docker /events stream")
 
-            buffer = ""
+            buffer = bytearray()
             while stop_event is None or not stop_event.is_set():
-                chunk = resp.read(1024)
+                chunk = resp.read(4096)
                 if not chunk:
                     add_log("Docker /events stream closed by daemon (EOF)")
                     break
-                buffer += chunk.decode("utf-8", errors="replace")
-                while "\n" in buffer:
-                    line, buffer = buffer.split("\n", 1)
-                    line = line.strip()
+                buffer.extend(chunk)
+                while True:
+                    newline_idx = buffer.find(b"\n")
+                    if newline_idx == -1:
+                        break
+                    line = buffer[:newline_idx].strip()
+                    del buffer[: newline_idx + 1]
                     if not line:
                         continue
                     try:
                         parsed = json.loads(line)
                         if on_event:
                             on_event(parsed)
-                    except json.JSONDecodeError:
+                    except (json.JSONDecodeError, UnicodeDecodeError):
                         pass
         except Exception as e:
             sync_state["docker_connected"] = False
