@@ -19,3 +19,7 @@ venv/
 env/
 scratch-tests/
 
+# devenv and direnv reproducible development environment
+.devenv/
+.devenv.*
+.direnv/
