@@ -17,35 +17,42 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"
 
       - name: Install Dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r cf-tunnel-sync/requirements.txt
+          uv sync --extra dev
+
+      - name: Lint with Ruff
+        run: |
+          uv run ruff check
 
       - name: Run Hermetic Unit Tests
         run: |
-          python -m unittest discover -s cf-tunnel-sync -v
+          uv run pytest -v
 
   smoke-tests:
     name: Container Build & Smoke Tests
+    needs: unit-tests
     runs-on: ubuntu-latest
-    needs: [unit-tests]
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Log in to Docker Hub (Rate Limit Prevention)
-        if: env.DOCKERHUB_USERNAME != ''
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Inspect Secrets Availability
+        run: |
+          echo "DOCKERHUB_USERNAME is: ${{ secrets.DOCKERHUB_USERNAME != '' && 'Set' || 'Not set' }}"
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
 
@@ -57,10 +64,13 @@ jobs:
               success=1
               break
             fi
-            echo "Build attempt $i failed, retrying in 10s..."
-            sleep 10
+            echo "Retry $i failed, waiting..."
+            sleep 2
           done
-          [ "$success" -eq 1 ] || exit 1
+          if [ "$success" -ne 1 ]; then
+            echo "Failed to build cf-tunnel-sync after 3 attempts"
+            exit 1
+          fi
 
       - name: Build cf-tunnel-dashboard Image
         run: |
@@ -70,10 +80,13 @@ jobs:
               success=1
               break
             fi
-            echo "Build attempt $i failed, retrying in 10s..."
-            sleep 10
+            echo "Retry $i failed, waiting..."
+            sleep 2
           done
-          [ "$success" -eq 1 ] || exit 1
+          if [ "$success" -ne 1 ]; then
+            echo "Failed to build cf-tunnel-dashboard after 3 attempts"
+            exit 1
+          fi
 
       - name: Test cf-tunnel-sync Container Boot & Health
         run: |
@@ -88,19 +101,25 @@ jobs:
           RETRY=0
           until curl -s -f http://127.0.0.1:8090/health; do
             RETRY=$((RETRY+1))
-            if [ $RETRY -ge 15 ]; then
-              echo "❌ Healthcheck failed within 30s"
+            if [ "$RETRY" -ge 15 ]; then
+              echo "Timeout waiting for cf-tunnel-sync"
               docker logs test-cf-sync
               exit 1
             fi
             sleep 2
           done
-          echo "✅ Healthcheck (/health) passed"
+          echo "✅ cf-tunnel-sync booted and /health returned OK"
 
-          curl -s -f http://127.0.0.1:8090/healthz || { echo "❌ /healthz failed"; exit 1; }
-          echo "✅ Healthcheck (/healthz) passed"
+          echo "Verifying embedded Web Dashboard UI is served..."
+          DASHBOARD_HTML=$(curl -s -f http://127.0.0.1:8090/)
+          if echo "$DASHBOARD_HTML" | grep -q "Cloudflare Tunnel"; then
+            echo "✅ Embedded Web Dashboard verified successfully"
+          else
+            echo "❌ Dashboard HTML did not contain expected content"
+            exit 1
+          fi
 
-          echo "Testing SIGTERM graceful shutdown..."
+          echo "Stopping cf-tunnel-sync container cleanly..."
           docker stop -t 5 test-cf-sync
           EXIT_CODE=$(docker inspect test-cf-sync --format='{{.State.ExitCode}}')
           echo "Exit code: $EXIT_CODE"
@@ -109,40 +128,42 @@ jobs:
             exit 1
           fi
           docker rm test-cf-sync
-          echo "✅ Graceful shutdown verified"
+          echo "✅ cf-tunnel-sync exited cleanly"
 
-      - name: Test cf-tunnel-dashboard Container Boot & Basic Auth
+      - name: Test cf-tunnel-dashboard Container Boot & Health
         run: |
           docker run -d \
             --name test-cf-dashboard \
             -p 8080:80 \
-            --add-host cf-tunnel-sync:127.0.0.1 \
+            -e DASHBOARD_AUTH_ENABLED=true \
             -e BASIC_AUTH_USERNAME=admin \
-            -e BASIC_AUTH_PASSWORD=password123 \
+            -e BASIC_AUTH_PASSWORD=testpassword123 \
             cf-tunnel-dashboard:test
 
-          echo "Waiting for dashboard to boot..."
+          echo "Waiting for cf-tunnel-dashboard to boot..."
           RETRY=0
           until curl -s -f http://127.0.0.1:8080/health; do
             RETRY=$((RETRY+1))
-            if [ $RETRY -ge 15 ]; then
-              echo "❌ Dashboard healthcheck failed within 30s"
+            if [ "$RETRY" -ge 10 ]; then
+              echo "Timeout waiting for cf-tunnel-dashboard"
               docker logs test-cf-dashboard
               exit 1
             fi
-            sleep 2
+            sleep 1
           done
-          echo "✅ Dashboard healthcheck passed"
+          echo "✅ cf-tunnel-dashboard booted and /health returned 200 OK"
 
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080 || true)
+          echo "Testing unauthenticated request (expecting 401)..."
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/)
           if [ "$HTTP_CODE" -ne 401 ]; then
-            echo "❌ Expected 401 Unauthorized without auth, got $HTTP_CODE"
+            echo "❌ Expected 401 Unauthorized without credentials, got $HTTP_CODE"
             docker logs test-cf-dashboard
             exit 1
           fi
           echo "✅ Unauthenticated request correctly rejected with 401"
 
-          AUTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" -u admin:password123 http://127.0.0.1:8080 || true)
+          echo "Testing authenticated request (expecting 200)..."
+          AUTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" -u admin:testpassword123 http://127.0.0.1:8080/)
           if [ "$AUTH_CODE" -ne 200 ]; then
             echo "❌ Expected 200 OK with valid credentials, got $AUTH_CODE"
             docker logs test-cf-dashboard

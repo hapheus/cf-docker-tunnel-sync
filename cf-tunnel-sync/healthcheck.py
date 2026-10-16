@@ -1,5 +1,5 @@
-import urllib.request
 import sys
+import urllib.request
 
 try:
     urllib.request.urlopen("http://127.0.0.1:8090/health", timeout=2)

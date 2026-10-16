@@ -17,10 +17,10 @@ Validates:
    - cf.tunnel.* (modern) > cloudflared.* (legacy) > bare shorthand (proto, port, notlsverify)
 """
 
-import unittest
-from unittest.mock import patch, MagicMock
 import os
 import sys
+import unittest
+from unittest.mock import patch
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 if CURRENT_DIR not in sys.path:

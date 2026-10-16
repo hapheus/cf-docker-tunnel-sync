@@ -1,9 +1,10 @@
+import os
 import unittest
 from unittest.mock import patch
-import os
+
 import app
-from fastapi.security import HTTPBasicCredentials
 from fastapi import HTTPException
+from fastapi.security import HTTPBasicCredentials
 
 
 class TestDashboardAuthenticationAndSingleContainer(unittest.TestCase):

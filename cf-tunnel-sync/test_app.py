@@ -1,9 +1,11 @@
-import unittest
-from unittest.mock import patch, MagicMock
-import urllib.error
 import io
 import os
+import unittest
+import urllib.error
+from unittest.mock import MagicMock, patch
+
 import app
+
 
 class TestAppSyncLogic(unittest.TestCase):
     def setUp(self):
@@ -479,7 +481,7 @@ class TestAppSyncLogic(unittest.TestCase):
             app.run_sync_logic()
 
         self.assertIsNotNone(ingress_payload, "PUT to /configurations should have been made")
-        
+
         # Verify standard rule has no originRequest
         std_rule = next((r for r in ingress_payload if r.get("hostname") == "standard.example.com"), None)
         self.assertIsNotNone(std_rule)
