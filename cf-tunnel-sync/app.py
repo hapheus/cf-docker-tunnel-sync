@@ -380,12 +380,57 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
     configured_tunnel_name = os.getenv("CLOUDFLARE_TUNNEL_NAME", "cf-docker-tunnel-sync").strip()
 
     try:
-        containers = docker_api('/containers/json?all=true')
+        expected_network = os.getenv("CF_NETWORK_NAME", "cf-tunnel-net").strip()
+        require_shared_net = os.getenv("REQUIRE_SHARED_NETWORK", "false").lower() in ("true", "1", "yes")
+
+        cloudflared_networks = set()
+        if expected_network:
+            cloudflared_networks.add(expected_network)
+
+        LEGACY_LABEL_CANONICAL_MAP = {
+            "cloudflared.hostname": "cf.tunnel.hostname",
+            "cloudflared.domain": "cf.tunnel.domain",
+            "cloudflared.port": "cf.tunnel.port",
+            "cloudflared.service": "cf.tunnel.service",
+            "cloudflared.proto": "cf.tunnel.proto",
+            "cloudflared.protocol": "cf.tunnel.protocol",
+            "cloudflared.scheme": "cf.tunnel.scheme",
+            "cloudflared.name": "cf.tunnel.name",
+            "cloudflared.tunnel": "cf.tunnel.name",
+            "cloudflared.notlsverify": "cf.tunnel.origin_request.no_tls_verify",
+            "cloudflared.notls_verify": "cf.tunnel.origin_request.no_tls_verify",
+            "cloudflared.originRequest.noTLSVerify": "cf.tunnel.origin_request.no_tls_verify",
+            "cloudflared.origin_request.no_tls_verify": "cf.tunnel.origin_request.no_tls_verify",
+            "cloudflared.httpHostHeader": "cf.tunnel.origin_request.http_host_header",
+            "cloudflared.originRequest.httpHostHeader": "cf.tunnel.origin_request.http_host_header",
+            "port": "cf.tunnel.port",
+            "proto": "cf.tunnel.proto",
+            "protocol": "cf.tunnel.protocol",
+            "scheme": "cf.tunnel.scheme",
+            "notlsverify": "cf.tunnel.origin_request.no_tls_verify"
+        }
+
+        containers = docker_api("/containers/json?all=true")
         if isinstance(containers, list):
+            cf_target_name = find_cloudflared_container_name()
+            for cand in containers:
+                if isinstance(cand, dict):
+                    cand_labels = cand.get("Labels") or {}
+                    cand_names = cand.get("Names", [])
+                    cand_name_clean = cand_names[0].lstrip("/") if cand_names else ""
+                    if cand_labels.get("com.docker.compose.service") == "cloudflared" or cand_name_clean == cf_target_name:
+                        cand_nets = (cand.get("NetworkSettings") or {}).get("Networks") or {}
+                        cloudflared_networks.update(cand_nets.keys())
             for c in containers:
                 labels = c.get('Labels') or {}
                 c_names = c.get('Names', ['/unknown'])
                 c_name = c_names[0].lstrip('/') if c_names else 'unknown'
+                for leg_key, canonical in LEGACY_LABEL_CANONICAL_MAP.items():
+                    if leg_key in labels:
+                        warn_key = (c_name, leg_key)
+                        if warn_key not in sync_state.setdefault("_deprecations_warned", set()):
+                            sync_state["_deprecations_warned"].add(warn_key)
+                            add_log(f"⚠️ Deprecation Notice: Container '{c_name}' uses legacy alias '{leg_key}'. Please migrate to canonical '{canonical}'.")
                 state = c.get('State', 'unknown')
                 status_text = c.get('Status', '')
                 image = c.get('Image', '')
@@ -573,16 +618,34 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
                         if http_host_header and str(http_host_header).strip():
                             origin_request["httpHostHeader"] = str(http_host_header).strip()
 
+                        # Network Pre-flight Diagnostic
+                        c_nets = (c.get('NetworkSettings') or {}).get('Networks') or {}
+                        container_networks = set(c_nets.keys())
+                        if container_networks and cloudflared_networks:
+                            has_shared_net = bool(container_networks.intersection(cloudflared_networks))
+                        else:
+                            has_shared_net = True
+
+                        if not has_shared_net:
+                            add_log(f"⚠️ Network Diagnostic: Container '{c_name}' is not attached to Cloudflare tunnel network '{expected_network}'. Requests to '{service_url}' will fail with 502 Bad Gateway!")
+                            if require_shared_net:
+                                add_log(f"⛔ Excluding '{c_name}' from sync: REQUIRE_SHARED_NETWORK=true and shared network '{expected_network}' is missing.")
+                                is_tunneled = False
+
                         service_item = {
                             "container": c_name,
                             "hostname": hostname,
                             "service": service_url,
                             "no_tls_verify": no_tls_verify,
+                            "network_connected": has_shared_net
                         }
+                        if not has_shared_net:
+                            service_item["network_warning"] = f"Missing shared network '{expected_network}'"
                         if origin_request:
                             service_item["originRequest"] = origin_request
 
-                        services.append(service_item)
+                        if is_tunneled:
+                            services.append(service_item)
 
                 all_containers.append({
                     "name": c_name,
@@ -590,7 +653,8 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
                     "state": state,
                     "status": status_text,
                     "hostname": hostname if hostname else "-",
-                    "is_tunneled": is_tunneled
+                    "is_tunneled": is_tunneled,
+                    "network_connected": has_shared_net if 'has_shared_net' in locals() else True
                 })
     except Exception as e:
         add_log(f"Docker API Error: {e}")
