@@ -33,7 +33,8 @@ sync_state = {
     "all_containers": [],
     "dns_records": [],
     "logs": [],
-    "docker_connected": True
+    "docker_connected": True,
+    "tombstones": {}
 }
 
 def add_log(msg: str):
@@ -274,28 +275,63 @@ def listen_docker_events(on_event: Callable[[dict], None], stop_event: Optional[
                 except Exception:
                     pass
 
-def cf_api(endpoint: str, token: str, method: str = 'GET', data: dict = None) -> dict:
-    url = f"https://api.cloudflare.com/client/v4{endpoint}"
+def cf_api(endpoint: str, token: str, method: str = 'GET', data: dict = None, paginate: bool = True, max_retries: int = 3) -> dict:
+    base_url = "https://api.cloudflare.com/client/v4"
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
-    body = json.dumps(data).encode('utf-8') if data else None
-    req = urllib.request.Request(url, data=body, headers=headers, method=method)
-    try:
-        with urllib.request.urlopen(req) as resp:
-            return json.loads(resp.read().decode('utf-8'))
-    except urllib.error.HTTPError as e:
-        err_body = e.read().decode('utf-8')
-        try:
-            err_json = json.loads(err_body)
-            errors = err_json.get("errors", [])
-            if errors:
-                err_text = "; ".join(f"{err.get('message')} (code: {err.get('code')})" for err in errors)
-                raise RuntimeError(f"Cloudflare API Error ({e.code}): {err_text}") from None
-        except (json.JSONDecodeError, AttributeError):
-            pass
-        raise RuntimeError(f"Cloudflare HTTP {e.code}: {err_body}") from None
+
+    def _single_request(url: str, post_data: dict = None) -> dict:
+        body = json.dumps(post_data).encode('utf-8') if post_data is not None else None
+        req = urllib.request.Request(url, data=body, headers=headers, method=method)
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                with urllib.request.urlopen(req) as resp:
+                    return json.loads(resp.read().decode('utf-8'))
+            except urllib.error.HTTPError as e:
+                if e.code == 429 and attempt < max_retries:
+                    retry_after = e.headers.get("Retry-After") if hasattr(e, "headers") and e.headers else None
+                    sleep_time = float(retry_after) if retry_after and retry_after.isdigit() else (0.2 * (2 ** (attempt - 1)))
+                    add_log(f"Cloudflare rate limit (429) on {url}, retrying in {sleep_time:.1f}s")
+                    time.sleep(sleep_time)
+                    continue
+
+                err_body = e.read().decode('utf-8')
+                try:
+                    err_json = json.loads(err_body)
+                    errors = err_json.get("errors", [])
+                    if errors:
+                        err_text = "; ".join(f"{err.get('message')} (code: {err.get('code')})" for err in errors)
+                        raise RuntimeError(f"Cloudflare API Error ({e.code}): {err_text}") from None
+                except (json.JSONDecodeError, AttributeError):
+                    pass
+                raise RuntimeError(f"Cloudflare HTTP {e.code}: {err_body}") from None
+
+    first_resp = _single_request(f"{base_url}{endpoint}", data)
+
+    # Auto-pagination for GET requests with result_info
+    if method == 'GET' and paginate and isinstance(first_resp, dict):
+        result_info = first_resp.get("result_info")
+        if isinstance(result_info, dict):
+            total_pages = result_info.get("total_pages", 1)
+            current_page = result_info.get("page", 1)
+            all_results = list(first_resp.get("result", []))
+
+            while current_page < total_pages:
+                current_page += 1
+                delim = "&" if "?" in endpoint else "?"
+                page_endpoint = f"{endpoint}{delim}page={current_page}"
+                next_resp = _single_request(f"{base_url}{page_endpoint}")
+                if isinstance(next_resp, dict) and isinstance(next_resp.get("result"), list):
+                    all_results.extend(next_resp["result"])
+                else:
+                    break
+
+            first_resp["result"] = all_results
+
+    return first_resp
 
 def find_cloudflared_container_name() -> str:
     """Resolve the cloudflared container name or ID dynamically."""
@@ -737,13 +773,45 @@ def run_sync_logic():
                 add_log(f"➕ Created DNS record for {host}")
             synced_dns.append({"hostname": host, "target": target_cname, "service": s["service"], "proxied": True})
 
-        # 7. Cleanup obsolete DNS records
-        all_dns = cf_api(f"/zones/{zone_id}/dns_records?type=CNAME&content={target_cname}", token)
+        # 7. Cleanup obsolete DNS records with grace period / tombstoning
         current_hosts = {s["hostname"] for s in services}
+        tombstones = sync_state.setdefault("tombstones", {})
+        now = time.time()
+
+        # Clear tombstones for any active host that has recovered
+        for host in current_hosts:
+            if host in tombstones:
+                del tombstones[host]
+                add_log(f"Container recovered for {host}, cleared tombstone")
+
+        immediate_cleanup = os.getenv("DNS_IMMEDIATE_CLEANUP", "false").lower() in ("true", "1", "yes")
+        try:
+            grace_period = float(os.getenv("DNS_CLEANUP_GRACE_PERIOD", 300.0))
+        except ValueError:
+            grace_period = 300.0
+
+        all_dns = cf_api(f"/zones/{zone_id}/dns_records?type=CNAME&content={target_cname}", token)
         for rec in all_dns.get("result", []):
-            if rec["name"] not in current_hosts:
-                cf_api(f"/zones/{zone_id}/dns_records/{rec['id']}", token, method="DELETE")
-                add_log(f"🗑️ Deleted obsolete DNS record for {rec['name']}")
+            rec_name = rec["name"]
+            if rec_name not in current_hosts:
+                if immediate_cleanup or grace_period <= 0:
+                    cf_api(f"/zones/{zone_id}/dns_records/{rec['id']}", token, method="DELETE")
+                    tombstones.pop(rec_name, None)
+                    add_log(f"🗑️ Deleted obsolete DNS record for {rec_name}")
+                else:
+                    if rec_name not in tombstones:
+                        tombstones[rec_name] = now
+                        add_log(f"⏳ Tombstoned {rec_name} against flapping (grace period: {int(grace_period)}s)")
+                    else:
+                        elapsed = now - tombstones[rec_name]
+                        if elapsed >= grace_period:
+                            cf_api(f"/zones/{zone_id}/dns_records/{rec['id']}", token, method="DELETE")
+                            del tombstones[rec_name]
+                            add_log(f"🗑️ Deleted obsolete DNS record for {rec_name} after grace period expired")
+                        else:
+                            remaining = int(grace_period - elapsed)
+                            add_log(f"⏳ DNS record for {rec_name} preserved in tombstone ({remaining}s remaining)")
+                            synced_dns.append({"hostname": rec_name, "target": target_cname, "service": "tombstoned", "proxied": True, "tombstone_remaining": remaining})
 
         sync_state["dns_records"] = synced_dns
         sync_state["status"] = "Active / Synced"

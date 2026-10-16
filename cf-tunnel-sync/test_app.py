@@ -14,6 +14,7 @@ class TestAppSyncLogic(unittest.TestCase):
         app.sync_state["all_containers"] = []
         app.sync_state["dns_records"] = []
         app.sync_state["logs"] = []
+        app.sync_state["tombstones"] = {}
         if "_last_ingress" in app.sync_state:
             del app.sync_state["_last_ingress"]
 
