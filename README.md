@@ -27,7 +27,7 @@ No local scripts, no cron jobs, and no complex manual tunnel setup required. Jus
 - **Automatic Service Discovery:** Scans running containers via `/var/run/docker.sock`.
 - **Zero-Config Tunnels:** Automatically creates, configures, and runs a Cloudflare Tunnel using your API token.
 - **Dynamic DNS Management:** Syncs CNAME records for labeled containers and cleans up obsolete ones when containers stop.
-- **Separated & Optional Web Dashboard:** A lightweight dashboard running on Nginx, completely decoupled from the core sync logic.
+- **Single-Container or Decoupled Dashboard:** The Web Dashboard is served directly by the core service with built-in HTTP Basic Auth for a lean single-container setup, while maintaining full backward compatibility for separate Nginx dashboard setups.
 - **Private Core API:** The unauthenticated Core API is reachable only inside the Docker network; the dashboard is its authenticated proxy.
 - **Multi-Arch Support:** Docker image works on standard Linux (AMD64) and Raspberry Pi (ARM64).
 
