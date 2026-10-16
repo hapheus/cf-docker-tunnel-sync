@@ -291,6 +291,210 @@ class TestAppSyncLogic(unittest.TestCase):
             name = app.find_cloudflared_container_name()
             self.assertEqual(name, "cloudflared")
 
+
+    @patch("app.docker_api")
+    def test_https_protocol_label_and_ports(self, mock_docker_api):
+        """Test HTTPS protocol label (cf.tunnel.protocol: https) with default port 443 and custom port"""
+        mock_docker_api.return_value = [
+            {
+                "Names": ["/secure-default-port"],
+                "State": "running",
+                "Labels": {
+                    "cf.tunnel.hostname": "secure-def.example.com",
+                    "cf.tunnel.protocol": "https",
+                },
+                "Ports": [],
+            },
+            {
+                "Names": ["/secure-custom-port"],
+                "State": "running",
+                "Labels": {
+                    "cf.tunnel.hostname": "secure-custom.example.com",
+                    "cf.tunnel.protocol": "https",
+                    "cf.tunnel.port": "8443",
+                },
+                "Ports": [],
+            },
+            {
+                "Names": ["/http-custom-port"],
+                "State": "running",
+                "Labels": {
+                    "cf.tunnel.hostname": "http-custom.example.com",
+                    "cf.tunnel.protocol": "http",
+                    "cf.tunnel.port": "8080",
+                },
+                "Ports": [],
+            },
+        ]
+
+        with patch.dict(os.environ, {"DOMAIN_NAME": "example.com"}, clear=True):
+            services, _ = app.get_docker_containers()
+
+        svc_map = {s["hostname"]: s["service"] for s in services}
+        self.assertEqual(svc_map.get("secure-def.example.com"), "https://secure-default-port:443")
+        self.assertEqual(svc_map.get("secure-custom.example.com"), "https://secure-custom-port:8443")
+        self.assertEqual(svc_map.get("http-custom.example.com"), "http://http-custom-port:8080")
+
+    @patch("app.docker_api")
+    def test_direct_uri_override(self, mock_docker_api):
+        """Test direct URI override via cf.tunnel.service takes absolute precedence"""
+        mock_docker_api.return_value = [
+            {
+                "Names": ["/authentik-server"],
+                "State": "running",
+                "Labels": {
+                    "cf.tunnel.hostname": "auth.example.com",
+                    "cf.tunnel.service": "https://authentik.internal:9443",
+                    "cf.tunnel.protocol": "http",
+                    "cf.tunnel.port": "80",
+                },
+                "Ports": [{"PrivatePort": 8000}],
+            }
+        ]
+
+        with patch.dict(os.environ, {"DOMAIN_NAME": "example.com"}, clear=True):
+            services, _ = app.get_docker_containers()
+
+        self.assertEqual(len(services), 1)
+        self.assertEqual(services[0]["hostname"], "auth.example.com")
+        self.assertEqual(services[0]["service"], "https://authentik.internal:9443")
+
+    @patch("app.docker_api")
+    def test_origin_request_mapping_tls_verify(self, mock_docker_api):
+        """Test originRequest mapping: cf.tunnel.tls.verify: false -> noTLSVerify: True"""
+        mock_docker_api.return_value = [
+            {
+                "Names": ["/unverified-tls"],
+                "State": "running",
+                "Labels": {
+                    "cf.tunnel.hostname": "unverified.example.com",
+                    "cf.tunnel.protocol": "https",
+                    "cf.tunnel.port": "8443",
+                    "cf.tunnel.tls.verify": "false",
+                },
+                "Ports": [],
+            },
+            {
+                "Names": ["/verified-tls"],
+                "State": "running",
+                "Labels": {
+                    "cf.tunnel.hostname": "verified.example.com",
+                    "cf.tunnel.protocol": "https",
+                    "cf.tunnel.port": "8443",
+                    "cf.tunnel.tls.verify": "true",
+                },
+                "Ports": [],
+            },
+        ]
+
+        with patch.dict(os.environ, {"DOMAIN_NAME": "example.com"}, clear=True):
+            services, _ = app.get_docker_containers()
+
+        svc_map = {s["hostname"]: s.get("originRequest", {}) for s in services}
+        self.assertTrue(svc_map.get("unverified.example.com", {}).get("noTLSVerify"))
+        self.assertFalse(svc_map.get("verified.example.com", {}).get("noTLSVerify", False))
+
+    @patch("app.docker_api")
+    def test_origin_request_server_name_and_host_header(self, mock_docker_api):
+        """Test originServerName and httpHostHeader pass-through in originRequest"""
+        mock_docker_api.return_value = [
+            {
+                "Names": ["/proxy-backend"],
+                "State": "running",
+                "Labels": {
+                    "cf.tunnel.hostname": "proxy.example.com",
+                    "cf.tunnel.service": "https://backend.local:443",
+                    "cf.tunnel.tls.verify": "false",
+                    "cf.tunnel.originServerName": "backend.local",
+                    "cf.tunnel.httpHostHeader": "custom-vhost.example.com",
+                },
+                "Ports": [],
+            }
+        ]
+
+        with patch.dict(os.environ, {"DOMAIN_NAME": "example.com"}, clear=True):
+            services, _ = app.get_docker_containers()
+
+        self.assertEqual(len(services), 1)
+        origin_req = services[0].get("originRequest", {})
+        self.assertEqual(origin_req.get("noTLSVerify"), True)
+        self.assertEqual(origin_req.get("originServerName"), "backend.local")
+        self.assertEqual(origin_req.get("httpHostHeader"), "custom-vhost.example.com")
+
+    @patch("app.cf_api")
+    @patch("app.get_docker_containers")
+    @patch("app.docker_api", MagicMock())
+    @patch("os.path.exists", MagicMock(return_value=True))
+    @patch("os.makedirs", MagicMock())
+    @patch("builtins.open", MagicMock())
+    def test_ingress_payload_structure_omits_empty_origin_request(
+        self, mock_get_containers, mock_cf_api
+    ):
+        """Test ingress payload structure ensures originRequest is omitted when no custom options are specified"""
+        mock_get_containers.return_value = (
+            [
+                {
+                    "container": "standard-app",
+                    "hostname": "standard.example.com",
+                    "service": "http://standard-app:80",
+                },
+                {
+                    "container": "custom-app",
+                    "hostname": "custom.example.com",
+                    "service": "https://custom-app:8443",
+                    "originRequest": {"noTLSVerify": True, "originServerName": "custom.internal"},
+                },
+            ],
+            [],
+        )
+
+        ingress_payload = None
+
+        def fake_cf_api(endpoint, token, method="GET", data=None):
+            nonlocal ingress_payload
+            if endpoint.startswith("/zones?name="):
+                return {"result": [{"id": "z1", "name": "example.com", "account": {"id": "acc1"}}]}
+            if "/cfd_tunnel?name=" in endpoint:
+                return {"result": [{"id": "tun-123", "name": "test-tunnel", "deleted_at": None}]}
+            if "/configurations" in endpoint:
+                if method == "PUT":
+                    ingress_payload = data.get("config", {}).get("ingress", [])
+                return {"result": {"config": {"ingress": []}}}
+            if "/dns_records" in endpoint:
+                return {"result": []}
+            return {"result": []}
+
+        mock_cf_api.side_effect = fake_cf_api
+
+        with patch.dict(
+            os.environ,
+            {
+                "CLOUDFLARE_API_TOKEN": "valid-token",
+                "DOMAIN_NAME": "example.com",
+                "CLOUDFLARE_TUNNEL_NAME": "test-tunnel",
+            },
+            clear=True,
+        ):
+            app.run_sync_logic()
+
+        self.assertIsNotNone(ingress_payload, "PUT to /configurations should have been made")
+        
+        # Verify standard rule has no originRequest
+        std_rule = next((r for r in ingress_payload if r.get("hostname") == "standard.example.com"), None)
+        self.assertIsNotNone(std_rule)
+        self.assertNotIn("originRequest", std_rule, "Standard rule must omit originRequest completely")
+
+        # Verify custom rule has populated originRequest
+        custom_rule = next((r for r in ingress_payload if r.get("hostname") == "custom.example.com"), None)
+        self.assertIsNotNone(custom_rule)
+        self.assertIn("originRequest", custom_rule)
+        self.assertEqual(custom_rule["originRequest"], {"noTLSVerify": True, "originServerName": "custom.internal"})
+
+        # Verify 404 catch-all has no originRequest
+        catch_all = next((r for r in ingress_payload if r.get("service") == "http_status:404"), None)
+        self.assertIsNotNone(catch_all)
+        self.assertNotIn("originRequest", catch_all)
+
 if __name__ == "__main__":
     unittest.main()
 

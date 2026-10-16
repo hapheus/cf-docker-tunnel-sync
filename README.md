@@ -198,9 +198,37 @@ networks:
     external: true
 ```
 
-- **`cf.tunnel.hostname`**: The public domain name you want to route to this container.
-- **`cf.tunnel.port`**: The internal container port (e.g. `80` for Nginx, `8080`, `3000`).
-- **`cf.tunnel.name`** *(Optional)*: Explicitly bind the container to a specific tunnel name (useful for multi-tunnel setups on the same domain).
+### Container Labels Reference
+
+| Label | Description | Default / Example | Required |
+|---|---|---|---|
+| `cf.tunnel.hostname` | The public domain name you want to route to this container (must match configured `DOMAIN_NAME`). Protocol prefixes (e.g. `https://`) and trailing slashes are automatically sanitized. | `app.${DOMAIN_NAME}` | **Yes** |
+| `cf.tunnel.port` | The internal container port (`1-65535`). If omitted, automatically defaults to `443` for HTTPS origins or `80` for HTTP origins. | `80` (or `443` for HTTPS) | No |
+| `cf.tunnel.protocol` | Origin connection protocol: `http` or `https`. *(Aliases: `cf.tunnel.proto`, `cf.tunnel.scheme`)* | `http` | No |
+| `cf.tunnel.tls.verify` | Whether Cloudflare Tunnel verifies upstream TLS certificates. Set to `false` for internal or self-signed certificates. *(Aliases: `cf.tunnel.notlsverify=true`, `cf.tunnel.notls_verify=true`)* | `true` | No |
+| `cf.tunnel.origin_server_name` | Overrides the Server Name Indication (SNI) hostname sent to the TLS origin. *(Aliases: `cf.tunnel.originservername`, `cf.tunnel.origin.server.name`)* | `origin.internal` | No |
+| `cf.tunnel.http_host_header` | Overrides the HTTP `Host` header sent to the upstream service. *(Aliases: `cf.tunnel.httphostheader`, `cf.tunnel.http.host.header`)* | `app.${DOMAIN_NAME}` | No |
+| `cf.tunnel.service` | Explicit target URL (e.g. for non-Docker host services via `http://host.docker.internal:8080`). When set, overrides container name/port. | - | No |
+| `cf.tunnel.name` | Explicitly binds the container to a specific tunnel name (useful for multi-tunnel setups on the same domain). | - | No |
+
+### Example: HTTPS Origin with Self-Signed Certificate (e.g., Authentik, Vault)
+
+If your internal service runs HTTPS with a self-signed or internal certificate, configure `cf.tunnel.protocol=https` and disable TLS verification via `cf.tunnel.tls.verify=false`:
+
+```yaml
+services:
+  authentik-server:
+    image: ghcr.io/goauthentik/server:latest
+    restart: unless-stopped
+    labels:
+      - "cf.tunnel.hostname=auth.${DOMAIN_NAME}"
+      - "cf.tunnel.protocol=https"
+      - "cf.tunnel.port=9443"
+      - "cf.tunnel.tls.verify=false"
+      - "cf.tunnel.origin_server_name=auth.internal" # Optional SNI override
+    networks:
+      - cf-tunnel-net
+```
 
 > [!IMPORTANT]
 > The target container must join `cf-tunnel-net` (`external: true`) so `cloudflared` can reach it via internal Docker DNS.
