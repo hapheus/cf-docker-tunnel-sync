@@ -1036,8 +1036,18 @@ def check_dashboard_auth(credentials: Optional[HTTPBasicCredentials] = Depends(s
     if auth_enabled_env in ("false", "0", "no"):
         return True
 
-    if not user and not pwd:
+    auth_explicitly_enabled = auth_enabled_env in ("true", "1", "yes")
+
+    if not auth_explicitly_enabled and not user and not pwd:
         return True
+
+    # Fail-closed: Auth is enabled, but credentials are blank or unconfigured
+    if not user or not pwd:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": 'Basic realm="Cloudflare Tunnel Sync Dashboard"'},
+        )
 
     if not credentials:
         raise HTTPException(
