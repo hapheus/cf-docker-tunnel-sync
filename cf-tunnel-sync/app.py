@@ -88,6 +88,14 @@ class UnixHTTPConnection(http.client.HTTPConnection):
         self.sock.connect(self.socket_path)
 
 
+class DockerAPIError(Exception):
+    """Raised when the Docker API returns an HTTP error status code or malformed payload."""
+
+    def __init__(self, message: str, status_code: Optional[int] = None):
+        super().__init__(message)
+        self.status_code = status_code
+
+
 def docker_api(
     path: str, method: str = "GET", data: dict = None, timeout: Optional[float] = None, retries: Optional[int] = None
 ) -> Any:
@@ -122,14 +130,36 @@ def docker_api(
 
             conn.request(method, path, body=body, headers=headers)
             resp = conn.getresponse()
+
+            resp_status = getattr(resp, "status", 200)
+            if isinstance(resp_status, str) and resp_status.isdigit():
+                resp_status = int(resp_status)
+            elif not isinstance(resp_status, int):
+                resp_status = 200
+
             resp_data = resp.read().decode("utf-8")
-            sync_state["docker_connected"] = True
+
+            if resp_status < 200 or resp_status >= 300:
+                sync_state["docker_connected"] = False
+                err_msg = f"Docker API HTTP {resp_status} on {method} {path}: {resp_data}"
+                add_log(err_msg)
+                raise DockerAPIError(err_msg, status_code=resp_status)
+
             if resp_data:
                 try:
-                    return json.loads(resp_data)
-                except Exception:
-                    return {"raw": resp_data}
+                    parsed = json.loads(resp_data)
+                except Exception as je:
+                    sync_state["docker_connected"] = False
+                    err_msg = f"Docker API returned invalid JSON on {method} {path}: {je}"
+                    add_log(err_msg)
+                    raise DockerAPIError(err_msg, status_code=resp_status)
+                sync_state["docker_connected"] = True
+                return parsed
+
+            sync_state["docker_connected"] = True
             return {}
+        except DockerAPIError:
+            raise
         except (socket.timeout, TimeoutError) as e:
             last_error = e
             sync_state["docker_connected"] = False
@@ -417,6 +447,16 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
         }
 
         containers = docker_api("/containers/json?all=true")
+        if not isinstance(containers, list):
+            sync_state["docker_connected"] = False
+            add_log("Docker API container discovery returned non-list response; failing closed")
+            return [], []
+
+        if containers:
+            sync_state["docker_connected"] = True
+        elif not sync_state.get("docker_connected", True):
+            return [], []
+
         if isinstance(containers, list):
             cf_target_name = find_cloudflared_container_name()
             for cand in containers:
@@ -662,7 +702,9 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
                     }
                 )
     except Exception as e:
+        sync_state["docker_connected"] = False
         add_log(f"Docker API Error: {e}")
+        return [], []
     return services, all_containers
 
 
@@ -798,7 +840,14 @@ def run_sync_logic():
                 add_log(f"Notice restarting cloudflared: {re}")
 
         # 4. Discover Docker services
-        services, all_containers = get_docker_containers()
+        try:
+            services, all_containers = get_docker_containers()
+        except Exception as e:
+            add_log(f"Aborting sync: Docker container discovery error: {e}")
+            sync_state["docker_connected"] = False
+            sync_state["status"] = "Docker connection degraded"
+            return
+
         if not sync_state.get("docker_connected", True):
             add_log("Aborting sync: Docker daemon connection is degraded or unreachable")
             sync_state["status"] = "Docker connection degraded"
