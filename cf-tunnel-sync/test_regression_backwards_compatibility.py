@@ -35,11 +35,14 @@ class TestComposeTopologiesRegression(unittest.TestCase):
     """
 
     def setUp(self):
-        self.env_patcher = patch.dict(os.environ, {
-            "DOMAIN_NAME": "example.com",
-            "CLOUDFLARE_TUNNEL_NAME": "cf-docker-tunnel-sync",
-            "CLOUDFLARED_CONTAINER_NAME": ""
-        })
+        self.env_patcher = patch.dict(
+            os.environ,
+            {
+                "DOMAIN_NAME": "example.com",
+                "CLOUDFLARE_TUNNEL_NAME": "cf-docker-tunnel-sync",
+                "CLOUDFLARED_CONTAINER_NAME": "",
+            },
+        )
         self.env_patcher.start()
         app.sync_state["status"] = "Initializing"
         app.sync_state["discovered_services"] = []
@@ -64,10 +67,7 @@ class TestComposeTopologiesRegression(unittest.TestCase):
                 "State": "running",
                 "Status": "Up 2 hours",
                 "Image": "cloudflare/cloudflared:latest",
-                "Labels": {
-                    "com.docker.compose.service": "cloudflared",
-                    "com.docker.compose.project": "single-compose"
-                }
+                "Labels": {"com.docker.compose.service": "cloudflared", "com.docker.compose.project": "single-compose"},
             },
             {
                 "Names": ["/cf-tunnel-sync"],
@@ -76,8 +76,8 @@ class TestComposeTopologiesRegression(unittest.TestCase):
                 "Image": "hapheus/cf-tunnel-sync:latest",
                 "Labels": {
                     "com.docker.compose.service": "cf-tunnel-sync",
-                    "com.docker.compose.project": "single-compose"
-                }
+                    "com.docker.compose.project": "single-compose",
+                },
             },
             {
                 "Names": ["/cf-tunnel-dashboard"],
@@ -86,8 +86,8 @@ class TestComposeTopologiesRegression(unittest.TestCase):
                 "Image": "hapheus/cf-tunnel-dashboard:latest",
                 "Labels": {
                     "com.docker.compose.service": "cf-tunnel-dashboard",
-                    "com.docker.compose.project": "single-compose"
-                }
+                    "com.docker.compose.project": "single-compose",
+                },
             },
             {
                 "Names": ["/single-compose-web-app-1"],
@@ -98,9 +98,9 @@ class TestComposeTopologiesRegression(unittest.TestCase):
                     "com.docker.compose.service": "web-app",
                     "com.docker.compose.project": "single-compose",
                     "cf.tunnel.hostname": "app.example.com",
-                    "cf.tunnel.port": "80"
-                }
-            }
+                    "cf.tunnel.port": "80",
+                },
+            },
         ]
         mock_docker_api.return_value = containers
 
@@ -138,38 +138,29 @@ class TestComposeTopologiesRegression(unittest.TestCase):
                 "State": "running",
                 "Status": "Up 5 hours",
                 "Image": "cloudflare/cloudflared:latest",
-                "Labels": {"com.docker.compose.project": "gateway", "com.docker.compose.service": "cloudflared"}
+                "Labels": {"com.docker.compose.project": "gateway", "com.docker.compose.service": "cloudflared"},
             },
             {
                 "Names": ["/service-whoami-whoami-1"],
                 "State": "running",
                 "Status": "Up 3 hours",
                 "Image": "traefik/whoami:latest",
-                "Labels": {
-                    "cf.tunnel.hostname": "whoami.example.com",
-                    "cf.tunnel.port": "80"
-                }
+                "Labels": {"cf.tunnel.hostname": "whoami.example.com", "cf.tunnel.port": "80"},
             },
             {
                 "Names": ["/service-website-web-1"],
                 "State": "running",
                 "Status": "Up 3 hours",
                 "Image": "nginx:alpine",
-                "Labels": {
-                    "cf.tunnel.hostname": "www.example.com",
-                    "cf.tunnel.port": "80"
-                }
+                "Labels": {"cf.tunnel.hostname": "www.example.com", "cf.tunnel.port": "80"},
             },
             {
                 "Names": ["/service-api-backend-1"],
                 "State": "running",
                 "Status": "Up 3 hours",
                 "Image": "node:alpine",
-                "Labels": {
-                    "cf.tunnel.hostname": "api.example.com",
-                    "cf.tunnel.port": "3000"
-                }
-            }
+                "Labels": {"cf.tunnel.hostname": "api.example.com", "cf.tunnel.port": "3000"},
+            },
         ]
         mock_docker_api.return_value = containers
 
@@ -195,20 +186,14 @@ class TestComposeTopologiesRegression(unittest.TestCase):
                 "Names": ["/personal-app"],
                 "State": "running",
                 "Status": "Up",
-                "Labels": {
-                    "cf.tunnel.hostname": "me.example.com",
-                    "cf.tunnel.name": "personal-tunnel"
-                }
+                "Labels": {"cf.tunnel.hostname": "me.example.com", "cf.tunnel.name": "personal-tunnel"},
             },
             {
                 "Names": ["/business-app"],
                 "State": "running",
                 "Status": "Up",
-                "Labels": {
-                    "cf.tunnel.hostname": "corp.example.com",
-                    "cf.tunnel.name": "business-tunnel"
-                }
-            }
+                "Labels": {"cf.tunnel.hostname": "corp.example.com", "cf.tunnel.name": "business-tunnel"},
+            },
         ]
 
         # Scenario A: Scoped to personal-tunnel
@@ -233,10 +218,9 @@ class TestLegacyLabelBackwardsCompatibility(unittest.TestCase):
     """
 
     def setUp(self):
-        self.env_patcher = patch.dict(os.environ, {
-            "DOMAIN_NAME": "example.com",
-            "CLOUDFLARE_TUNNEL_NAME": "cf-docker-tunnel-sync"
-        })
+        self.env_patcher = patch.dict(
+            os.environ, {"DOMAIN_NAME": "example.com", "CLOUDFLARE_TUNNEL_NAME": "cf-docker-tunnel-sync"}
+        )
         self.env_patcher.start()
         app.sync_state["status"] = "Initializing"
         app.sync_state["discovered_services"] = []
@@ -256,10 +240,7 @@ class TestLegacyLabelBackwardsCompatibility(unittest.TestCase):
                 "Names": ["/legacy-app"],
                 "State": "running",
                 "Status": "Up",
-                "Labels": {
-                    "cloudflared.hostname": "legacy.example.com",
-                    "cloudflared.port": "8080"
-                }
+                "Labels": {"cloudflared.hostname": "legacy.example.com", "cloudflared.port": "8080"},
             }
         ]
         services, _ = app.get_docker_containers()
@@ -277,9 +258,7 @@ class TestLegacyLabelBackwardsCompatibility(unittest.TestCase):
                 "Names": ["/legacy-domain-app"],
                 "State": "running",
                 "Status": "Up",
-                "Labels": {
-                    "cloudflared.domain": "domain-legacy.example.com"
-                }
+                "Labels": {"cloudflared.domain": "domain-legacy.example.com"},
             }
         ]
         services, _ = app.get_docker_containers()
@@ -297,10 +276,7 @@ class TestLegacyLabelBackwardsCompatibility(unittest.TestCase):
                 "Names": ["/legacy-proto-app"],
                 "State": "running",
                 "Status": "Up",
-                "Labels": {
-                    "cloudflared.hostname": "proto.example.com",
-                    "cloudflared.proto": "https"
-                }
+                "Labels": {"cloudflared.hostname": "proto.example.com", "cloudflared.proto": "https"},
             },
             {
                 "Names": ["/legacy-protocol-app"],
@@ -309,9 +285,9 @@ class TestLegacyLabelBackwardsCompatibility(unittest.TestCase):
                 "Labels": {
                     "cloudflared.hostname": "protocol.example.com",
                     "cloudflared.protocol": "https",
-                    "cloudflared.port": "8443"
-                }
-            }
+                    "cloudflared.port": "8443",
+                },
+            },
         ]
         services, _ = app.get_docker_containers()
         svc_map = {s["hostname"]: s for s in services}
@@ -330,11 +306,7 @@ class TestLegacyLabelBackwardsCompatibility(unittest.TestCase):
                 "Names": ["/shorthand-app"],
                 "State": "running",
                 "Status": "Up",
-                "Labels": {
-                    "cf.tunnel.hostname": "shorthand.example.com",
-                    "proto": "https",
-                    "port": "9443"
-                }
+                "Labels": {"cf.tunnel.hostname": "shorthand.example.com", "proto": "https", "port": "9443"},
             }
         ]
         services, _ = app.get_docker_containers()
@@ -355,8 +327,8 @@ class TestLegacyLabelBackwardsCompatibility(unittest.TestCase):
                 "Labels": {
                     "cf.tunnel.hostname": "notls.example.com",
                     "cf.tunnel.protocol": "https",
-                    "notlsverify": "true"
-                }
+                    "notlsverify": "true",
+                },
             }
         ]
         services, _ = app.get_docker_containers()
@@ -379,8 +351,8 @@ class TestLegacyLabelBackwardsCompatibility(unittest.TestCase):
                 "Labels": {
                     "cloudflared.hostname": "cf-notls.example.com",
                     "cloudflared.proto": "https",
-                    "cloudflared.notlsverify": "1"
-                }
+                    "cloudflared.notlsverify": "1",
+                },
             }
         ]
         services, _ = app.get_docker_containers()
@@ -402,8 +374,8 @@ class TestLegacyLabelBackwardsCompatibility(unittest.TestCase):
                 "Status": "Up",
                 "Labels": {
                     "cloudflared.hostname": "direct.example.com",
-                    "cloudflared.service": "https://custom-target:9000"
-                }
+                    "cloudflared.service": "https://custom-target:9000",
+                },
             }
         ]
         services, _ = app.get_docker_containers()
@@ -420,29 +392,20 @@ class TestLegacyLabelBackwardsCompatibility(unittest.TestCase):
                 "Names": ["/scoped-name-app"],
                 "State": "running",
                 "Status": "Up",
-                "Labels": {
-                    "cloudflared.hostname": "name-scope.example.com",
-                    "cloudflared.name": "legacy-tunnel"
-                }
+                "Labels": {"cloudflared.hostname": "name-scope.example.com", "cloudflared.name": "legacy-tunnel"},
             },
             {
                 "Names": ["/scoped-tunnel-app"],
                 "State": "running",
                 "Status": "Up",
-                "Labels": {
-                    "cloudflared.hostname": "tunnel-scope.example.com",
-                    "cloudflared.tunnel": "legacy-tunnel"
-                }
+                "Labels": {"cloudflared.hostname": "tunnel-scope.example.com", "cloudflared.tunnel": "legacy-tunnel"},
             },
             {
                 "Names": ["/other-app"],
                 "State": "running",
                 "Status": "Up",
-                "Labels": {
-                    "cloudflared.hostname": "other.example.com",
-                    "cloudflared.name": "different-tunnel"
-                }
-            }
+                "Labels": {"cloudflared.hostname": "other.example.com", "cloudflared.name": "different-tunnel"},
+            },
         ]
         with patch.dict(os.environ, {"CLOUDFLARE_TUNNEL_NAME": "legacy-tunnel"}):
             services, _ = app.get_docker_containers()
@@ -478,8 +441,8 @@ class TestLegacyLabelBackwardsCompatibility(unittest.TestCase):
                     # TLS Verify
                     "cf.tunnel.notlsverify": "true",
                     "cloudflared.notlsverify": "false",
-                    "notlsverify": "false"
-                }
+                    "notlsverify": "false",
+                },
             }
         ]
         services, _ = app.get_docker_containers()

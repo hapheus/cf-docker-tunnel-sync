@@ -19,7 +19,7 @@ class TestDockerNetworkDiagnostics(unittest.TestCase):
                 "Names": ["/my-web"],
                 "State": "running",
                 "Labels": {"cf.tunnel.hostname": "web.example.com", "cf.tunnel.port": "80"},
-                "NetworkSettings": {"Networks": {"cf-tunnel-net": {}}}
+                "NetworkSettings": {"Networks": {"cf-tunnel-net": {}}},
             }
         ]
 
@@ -39,7 +39,7 @@ class TestDockerNetworkDiagnostics(unittest.TestCase):
                 "Names": ["/isolated-service"],
                 "State": "running",
                 "Labels": {"cf.tunnel.hostname": "isolated.example.com", "cf.tunnel.port": "8080"},
-                "NetworkSettings": {"Networks": {"private-db-net": {}}}
+                "NetworkSettings": {"Networks": {"private-db-net": {}}},
             }
         ]
 
@@ -61,15 +61,14 @@ class TestDockerNetworkDiagnostics(unittest.TestCase):
                 "Names": ["/isolated-service"],
                 "State": "running",
                 "Labels": {"cf.tunnel.hostname": "isolated.example.com", "cf.tunnel.port": "8080"},
-                "NetworkSettings": {"Networks": {"isolated-net": {}}}
+                "NetworkSettings": {"Networks": {"isolated-net": {}}},
             }
         ]
 
-        with patch.dict(os.environ, {
-            "DOMAIN_NAME": "example.com",
-            "CF_NETWORK_NAME": "cf-tunnel-net",
-            "REQUIRE_SHARED_NETWORK": "true"
-        }):
+        with patch.dict(
+            os.environ,
+            {"DOMAIN_NAME": "example.com", "CF_NETWORK_NAME": "cf-tunnel-net", "REQUIRE_SHARED_NETWORK": "true"},
+        ):
             services, all_c = app.get_docker_containers()
 
         # Excluded from services
@@ -87,14 +86,14 @@ class TestDockerNetworkDiagnostics(unittest.TestCase):
                 "Names": ["/my-cloudflared"],
                 "State": "running",
                 "Labels": {"com.docker.compose.service": "cloudflared"},
-                "NetworkSettings": {"Networks": {"custom-app-network": {}}}
+                "NetworkSettings": {"Networks": {"custom-app-network": {}}},
             },
             {
                 "Names": ["/my-app"],
                 "State": "running",
                 "Labels": {"cf.tunnel.hostname": "app.example.com", "cf.tunnel.port": "3000"},
-                "NetworkSettings": {"Networks": {"custom-app-network": {}}}
-            }
+                "NetworkSettings": {"Networks": {"custom-app-network": {}}},
+            },
         ]
 
         with patch.dict(os.environ, {"DOMAIN_NAME": "example.com", "CF_NETWORK_NAME": "cf-tunnel-net"}):

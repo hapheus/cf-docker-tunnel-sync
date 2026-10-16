@@ -10,9 +10,7 @@ class TestComposeExamplesAndSchemaValidation(unittest.TestCase):
         # Locate the project root
         current_dir = os.path.dirname(os.path.abspath(__file__))
         self.root_dir = os.path.abspath(os.path.join(current_dir, ".."))
-        self.compose_files = sorted(
-            glob.glob(os.path.join(self.root_dir, "**/docker-compose.y*ml"), recursive=True)
-        )
+        self.compose_files = sorted(glob.glob(os.path.join(self.root_dir, "**/docker-compose.y*ml"), recursive=True))
 
     def test_compose_files_discovered(self):
         """Verify that compose files are discovered across root and examples directories."""

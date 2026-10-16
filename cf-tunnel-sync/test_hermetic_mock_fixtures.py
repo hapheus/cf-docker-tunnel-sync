@@ -49,7 +49,9 @@ class TestHermeticCloudflareMockFixtures(unittest.TestCase):
         """Hermetically verify HTTP 429 rate limit backoff and automatic retry via respx."""
         route = respx.get(f"{self.base_url}/accounts").mock(
             side_effect=[
-                httpx.Response(429, headers={"Retry-After": "0"}, json={"errors": [{"code": 10014, "message": "Rate limited"}]}),
+                httpx.Response(
+                    429, headers={"Retry-After": "0"}, json={"errors": [{"code": 10014, "message": "Rate limited"}]}
+                ),
                 httpx.Response(200, json={"result": [{"id": "acc-123", "name": "My Account"}]}),
             ]
         )
@@ -87,7 +89,12 @@ class TestHermeticCloudflareMockFixtures(unittest.TestCase):
         )
 
         # 1. Create DNS record
-        create_payload = {"type": "CNAME", "name": "api.example.com", "content": "tun.cfargotunnel.com", "proxied": True}
+        create_payload = {
+            "type": "CNAME",
+            "name": "api.example.com",
+            "content": "tun.cfargotunnel.com",
+            "proxied": True,
+        }
         res_create = cf_api("/zones/z1/dns_records", self.token, method="POST", data=create_payload)
         self.assertEqual(res_create["result"]["id"], "rec-new")
         self.assertTrue(create_route.called)

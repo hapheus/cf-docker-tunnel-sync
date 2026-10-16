@@ -82,12 +82,13 @@ class TestAppSyncLogic(unittest.TestCase):
     @patch("os.path.exists", return_value=True)
     @patch("os.makedirs", MagicMock())
     @patch("builtins.open", MagicMock())
-    def test_sync_idempotency_ingress_and_dns(
-        self, mock_exists, mock_docker_api, mock_get_containers, mock_cf_api
-    ):
+    def test_sync_idempotency_ingress_and_dns(self, mock_exists, mock_docker_api, mock_get_containers, mock_cf_api):
         """Test that unchanged ingress and unchanged DNS do not trigger redundant PUT calls on next sync"""
         service = [{"container": "web", "hostname": "web.example.com", "service": "http://web:80"}]
-        mock_get_containers.return_value = (service, [{"name": "web", "state": "running", "hostname": "web.example.com", "is_tunneled": True}])
+        mock_get_containers.return_value = (
+            service,
+            [{"name": "web", "state": "running", "hostname": "web.example.com", "is_tunneled": True}],
+        )
 
         put_calls = []
 
@@ -144,7 +145,9 @@ class TestAppSyncLogic(unittest.TestCase):
 
             # Second sync with identical services
             app.run_sync_logic()
-            self.assertEqual(len(put_calls), initial_puts, "No additional PUT calls should occur when state is identical")
+            self.assertEqual(
+                len(put_calls), initial_puts, "No additional PUT calls should occur when state is identical"
+            )
 
     def test_no_hardcoded_domain_fallback(self):
         """DOMAIN_NAME should not default to private domain 'fraha.dev'"""
@@ -295,7 +298,6 @@ class TestAppSyncLogic(unittest.TestCase):
             name = app.find_cloudflared_container_name()
             self.assertEqual(name, "cloudflared")
 
-
     @patch("app.docker_api")
     def test_https_protocol_label_and_ports(self, mock_docker_api):
         """Test HTTPS protocol label (cf.tunnel.protocol: https) with default port 443 and custom port"""
@@ -431,9 +433,7 @@ class TestAppSyncLogic(unittest.TestCase):
     @patch("os.path.exists", MagicMock(return_value=True))
     @patch("os.makedirs", MagicMock())
     @patch("builtins.open", MagicMock())
-    def test_ingress_payload_structure_omits_empty_origin_request(
-        self, mock_get_containers, mock_cf_api
-    ):
+    def test_ingress_payload_structure_omits_empty_origin_request(self, mock_get_containers, mock_cf_api):
         """Test ingress payload structure ensures originRequest is omitted when no custom options are specified"""
         mock_get_containers.return_value = (
             [
@@ -499,6 +499,6 @@ class TestAppSyncLogic(unittest.TestCase):
         self.assertIsNotNone(catch_all)
         self.assertNotIn("originRequest", catch_all)
 
+
 if __name__ == "__main__":
     unittest.main()
-

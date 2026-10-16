@@ -50,44 +50,28 @@ class TestEventDrivenSync(unittest.IsolatedAsyncioTestCase):
         """Verify handle_docker_event triggers on container lifecycle actions and ignores others."""
         with patch.object(app.debouncer, "trigger") as mock_trigger:
             # 1. Container start event -> should trigger
-            app.handle_docker_event({
-                "Type": "container",
-                "Action": "start",
-                "Actor": {"Attributes": {"name": "web-nginx"}}
-            })
+            app.handle_docker_event(
+                {"Type": "container", "Action": "start", "Actor": {"Attributes": {"name": "web-nginx"}}}
+            )
             mock_trigger.assert_called_with("start:web-nginx")
 
             # 2. Container stop event -> should trigger
-            app.handle_docker_event({
-                "Type": "container",
-                "Action": "stop",
-                "Actor": {"Attributes": {"name": "db-postgres"}}
-            })
+            app.handle_docker_event(
+                {"Type": "container", "Action": "stop", "Actor": {"Attributes": {"name": "db-postgres"}}}
+            )
             mock_trigger.assert_called_with("stop:db-postgres")
 
             # 3. Container die event -> should trigger
-            app.handle_docker_event({
-                "Type": "container",
-                "Action": "die",
-                "id": "1234567890abcdef",
-                "Actor": {}
-            })
+            app.handle_docker_event({"Type": "container", "Action": "die", "id": "1234567890abcdef", "Actor": {}})
             mock_trigger.assert_called_with("die:1234567890ab")
 
             # 4. Image pull event -> must be ignored
             mock_trigger.reset_mock()
-            app.handle_docker_event({
-                "Type": "image",
-                "Action": "pull",
-                "id": "sha256:abc"
-            })
+            app.handle_docker_event({"Type": "image", "Action": "pull", "id": "sha256:abc"})
             mock_trigger.assert_not_called()
 
             # 5. Non-lifecycle container action (e.g. top) -> must be ignored
-            app.handle_docker_event({
-                "Type": "container",
-                "Action": "top"
-            })
+            app.handle_docker_event({"Type": "container", "Action": "top"})
             mock_trigger.assert_not_called()
 
     @patch("os.path.exists", return_value=True)
@@ -105,7 +89,7 @@ class TestEventDrivenSync(unittest.IsolatedAsyncioTestCase):
         payloads = [
             b'{"Type": "container", "Action": "start", "Actor": {"Attributes": {"name": "c1"}}}\n',
             b'{"Type": "container", "Action": "die", "Actor": {"Attributes": {"name": "c2"}}}\n',
-            b''  # EOF
+            b"",  # EOF
         ]
         mock_resp.read.side_effect = payloads
         mock_conn.getresponse.return_value = mock_resp
@@ -118,9 +102,7 @@ class TestEventDrivenSync(unittest.IsolatedAsyncioTestCase):
 
         # Run listener in background thread with stop_event
         t = threading.Thread(
-            target=app.listen_docker_events,
-            args=(callback, stop_event, "/var/run/docker.sock"),
-            daemon=True
+            target=app.listen_docker_events, args=(callback, stop_event, "/var/run/docker.sock"), daemon=True
         )
         t.start()
         t.join(timeout=2.0)

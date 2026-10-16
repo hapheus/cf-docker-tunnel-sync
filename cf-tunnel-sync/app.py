@@ -19,8 +19,10 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("cf-tunnel-sync")
 
+
 def get_domain_name() -> str:
     return os.getenv("DOMAIN_NAME", "").strip()
+
 
 sync_lock = threading.Lock()
 
@@ -35,8 +37,9 @@ sync_state = {
     "dns_records": [],
     "logs": [],
     "docker_connected": True,
-    "tombstones": {}
+    "tombstones": {},
 }
+
 
 def add_log(msg: str):
     timestamp = time.strftime("%H:%M:%S")
@@ -49,7 +52,7 @@ def add_log(msg: str):
 
 class UnixHTTPConnection(http.client.HTTPConnection):
     def __init__(self, socket_path: str, timeout: Optional[float] = 10.0):
-        super().__init__('localhost', timeout=timeout)
+        super().__init__("localhost", timeout=timeout)
         self.socket_path = socket_path
         self.timeout = timeout
 
@@ -59,7 +62,10 @@ class UnixHTTPConnection(http.client.HTTPConnection):
             self.sock.settimeout(self.timeout)
         self.sock.connect(self.socket_path)
 
-def docker_api(path: str, method: str = 'GET', data: dict = None, timeout: Optional[float] = None, retries: Optional[int] = None) -> Any:
+
+def docker_api(
+    path: str, method: str = "GET", data: dict = None, timeout: Optional[float] = None, retries: Optional[int] = None
+) -> Any:
     socket_path = os.getenv("DOCKER_SOCKET", os.getenv("DOCKER_SOCKET_PATH", "/var/run/docker.sock"))
     if not os.path.exists(socket_path):
         sync_state["docker_connected"] = False
@@ -85,13 +91,13 @@ def docker_api(path: str, method: str = 'GET', data: dict = None, timeout: Optio
             body = None
             headers = {}
             if data is not None:
-                body = json.dumps(data).encode('utf-8')
-                headers['Content-Type'] = 'application/json'
-                headers['Content-Length'] = str(len(body))
+                body = json.dumps(data).encode("utf-8")
+                headers["Content-Type"] = "application/json"
+                headers["Content-Length"] = str(len(body))
 
             conn.request(method, path, body=body, headers=headers)
             resp = conn.getresponse()
-            resp_data = resp.read().decode('utf-8')
+            resp_data = resp.read().decode("utf-8")
             sync_state["docker_connected"] = True
             if resp_data:
                 try:
@@ -122,10 +128,10 @@ def docker_api(path: str, method: str = 'GET', data: dict = None, timeout: Optio
     add_log(f"Docker API failed after {retries} retries: {last_error}")
     return []
 
+
 # Event-driven Debouncer & Stream Listener
-CONTAINER_LIFECYCLE_ACTIONS = {
-    "start", "stop", "die", "kill", "destroy", "rename", "pause", "unpause", "restart"
-}
+CONTAINER_LIFECYCLE_ACTIONS = {"start", "stop", "die", "kill", "destroy", "rename", "pause", "unpause", "restart"}
+
 
 class DebouncedSyncTrigger:
     def __init__(self, delay: float = 2.5, max_delay: float = 10.0, sync_target: Optional[Callable] = None):
@@ -181,9 +187,11 @@ class DebouncedSyncTrigger:
         except asyncio.CancelledError:
             pass
 
+
 DEBOUNCE_DELAY = float(os.getenv("SYNC_DEBOUNCE_DELAY", 2.5))
 DEBOUNCE_MAX_DELAY = float(os.getenv("SYNC_DEBOUNCE_MAX_DELAY", 10.0))
 debouncer = DebouncedSyncTrigger(delay=DEBOUNCE_DELAY, max_delay=DEBOUNCE_MAX_DELAY)
+
 
 def handle_docker_event(event: dict):
     if not isinstance(event, dict):
@@ -201,7 +209,10 @@ def handle_docker_event(event: dict):
         add_log(f"Container lifecycle event: {base_action} for {container_name}")
         debouncer.trigger(f"{base_action}:{container_name}")
 
-def listen_docker_events(on_event: Callable[[dict], None], stop_event: Optional[threading.Event] = None, socket_path: Optional[str] = None):
+
+def listen_docker_events(
+    on_event: Callable[[dict], None], stop_event: Optional[threading.Event] = None, socket_path: Optional[str] = None
+):
     if socket_path is None:
         socket_path = os.getenv("DOCKER_SOCKET", os.getenv("DOCKER_SOCKET_PATH", "/var/run/docker.sock"))
 
@@ -276,6 +287,7 @@ def listen_docker_events(on_event: Callable[[dict], None], stop_event: Optional[
                 except Exception:
                     pass
 
+
 def find_cloudflared_container_name() -> str:
     """Resolve the cloudflared container name or ID dynamically."""
     explicit_name = os.getenv("CLOUDFLARED_CONTAINER_NAME", "").strip()
@@ -283,37 +295,38 @@ def find_cloudflared_container_name() -> str:
         return explicit_name
 
     try:
-        containers = docker_api('/containers/json?all=true')
+        containers = docker_api("/containers/json?all=true")
         if isinstance(containers, list):
             my_hostname = os.getenv("HOSTNAME", "").strip()
             current_project = None
             if my_hostname:
                 for c in containers:
-                    c_id = c.get('Id', '')
-                    c_names = [n.lstrip('/') for n in c.get('Names', [])]
+                    c_id = c.get("Id", "")
+                    c_names = [n.lstrip("/") for n in c.get("Names", [])]
                     if c_id.startswith(my_hostname) or my_hostname in c_names:
-                        current_project = (c.get('Labels') or {}).get('com.docker.compose.project')
+                        current_project = (c.get("Labels") or {}).get("com.docker.compose.project")
                         break
 
             for c in containers:
-                labels = c.get('Labels') or {}
-                service = labels.get('com.docker.compose.service')
-                project = labels.get('com.docker.compose.project')
-                if service == 'cloudflared':
+                labels = c.get("Labels") or {}
+                service = labels.get("com.docker.compose.service")
+                project = labels.get("com.docker.compose.project")
+                if service == "cloudflared":
                     if current_project and project == current_project:
-                        c_names = c.get('Names', [])
+                        c_names = c.get("Names", [])
                         if c_names:
-                            return c_names[0].lstrip('/')
-                        return c.get('Id', 'cloudflared')
+                            return c_names[0].lstrip("/")
+                        return c.get("Id", "cloudflared")
                     elif not current_project:
-                        c_names = c.get('Names', [])
+                        c_names = c.get("Names", [])
                         if c_names:
-                            return c_names[0].lstrip('/')
-                        return c.get('Id', 'cloudflared')
+                            return c_names[0].lstrip("/")
+                        return c.get("Id", "cloudflared")
     except Exception as e:
         logger.warning(f"Error resolving cloudflared container: {e}")
 
     return "cloudflared"
+
 
 def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     services = []
@@ -350,7 +363,7 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
             "proto": "cf.tunnel.proto",
             "protocol": "cf.tunnel.protocol",
             "scheme": "cf.tunnel.scheme",
-            "notlsverify": "cf.tunnel.origin_request.no_tls_verify"
+            "notlsverify": "cf.tunnel.origin_request.no_tls_verify",
         }
 
         containers = docker_api("/containers/json?all=true")
@@ -361,28 +374,33 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
                     cand_labels = cand.get("Labels") or {}
                     cand_names = cand.get("Names", [])
                     cand_name_clean = cand_names[0].lstrip("/") if cand_names else ""
-                    if cand_labels.get("com.docker.compose.service") == "cloudflared" or cand_name_clean == cf_target_name:
+                    if (
+                        cand_labels.get("com.docker.compose.service") == "cloudflared"
+                        or cand_name_clean == cf_target_name
+                    ):
                         cand_nets = (cand.get("NetworkSettings") or {}).get("Networks") or {}
                         cloudflared_networks.update(cand_nets.keys())
             for c in containers:
-                labels = c.get('Labels') or {}
-                c_names = c.get('Names', ['/unknown'])
-                c_name = c_names[0].lstrip('/') if c_names else 'unknown'
+                labels = c.get("Labels") or {}
+                c_names = c.get("Names", ["/unknown"])
+                c_name = c_names[0].lstrip("/") if c_names else "unknown"
                 for leg_key, canonical in LEGACY_LABEL_CANONICAL_MAP.items():
                     if leg_key in labels:
                         warn_key = (c_name, leg_key)
                         if warn_key not in sync_state.setdefault("_deprecations_warned", set()):
                             sync_state["_deprecations_warned"].add(warn_key)
-                            add_log(f"⚠️ Deprecation Notice: Container '{c_name}' uses legacy alias '{leg_key}'. Please migrate to canonical '{canonical}'.")
-                state = c.get('State', 'unknown')
-                status_text = c.get('Status', '')
-                image = c.get('Image', '')
+                            add_log(
+                                f"⚠️ Deprecation Notice: Container '{c_name}' uses legacy alias '{leg_key}'. Please migrate to canonical '{canonical}'."
+                            )
+                state = c.get("State", "unknown")
+                status_text = c.get("Status", "")
+                image = c.get("Image", "")
 
                 raw_hostname = (
-                    labels.get('cf.tunnel.hostname')
-                    or labels.get('cf.tunnel.domain')
-                    or labels.get('cloudflared.hostname')
-                    or labels.get('cloudflared.domain')
+                    labels.get("cf.tunnel.hostname")
+                    or labels.get("cf.tunnel.domain")
+                    or labels.get("cloudflared.hostname")
+                    or labels.get("cloudflared.domain")
                 )
                 hostname = str(raw_hostname).strip() if raw_hostname else ""
                 if "://" in hostname:
@@ -397,14 +415,14 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
 
                 # Optional tunnel scoping: if cf.tunnel.name is set, verify it matches CLOUDFLARE_TUNNEL_NAME
                 target_tunnel = (
-                    labels.get('cf.tunnel.name')
-                    or labels.get('cf.tunnel.tunnel')
-                    or labels.get('cloudflared.name')
-                    or labels.get('cloudflared.tunnel')
+                    labels.get("cf.tunnel.name")
+                    or labels.get("cf.tunnel.tunnel")
+                    or labels.get("cloudflared.name")
+                    or labels.get("cloudflared.tunnel")
                 )
                 matches_tunnel = True
                 if target_tunnel:
-                    matches_tunnel = (str(target_tunnel).strip() == configured_tunnel_name)
+                    matches_tunnel = str(target_tunnel).strip() == configured_tunnel_name
 
                 is_tunneled = False
                 service_url = ""
@@ -419,16 +437,16 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
 
                         # Protocol / Scheme (precedence: modern cf.tunnel.* > legacy cloudflared.* > bare shorthand)
                         raw_proto = (
-                            labels.get('cf.tunnel.protocol')
-                            or labels.get('cf.tunnel.proto')
-                            or labels.get('cf.tunnel.scheme')
-                            or labels.get('cloudflared.protocol')
-                            or labels.get('cloudflared.proto')
-                            or labels.get('cloudflared.scheme')
-                            or labels.get('proto')
-                            or labels.get('protocol')
-                            or labels.get('scheme')
-                            or 'http'
+                            labels.get("cf.tunnel.protocol")
+                            or labels.get("cf.tunnel.proto")
+                            or labels.get("cf.tunnel.scheme")
+                            or labels.get("cloudflared.protocol")
+                            or labels.get("cloudflared.proto")
+                            or labels.get("cloudflared.scheme")
+                            or labels.get("proto")
+                            or labels.get("protocol")
+                            or labels.get("scheme")
+                            or "http"
                         )
                         proto = str(raw_proto).strip().lower()
                         if proto not in ("http", "https", "tcp", "udp", "ssh", "rdp"):
@@ -436,9 +454,7 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
 
                         # Port parsing and validation (precedence: modern > legacy > bare shorthand)
                         port_label = (
-                            labels.get('cf.tunnel.port')
-                            or labels.get('cloudflared.port')
-                            or labels.get('port')
+                            labels.get("cf.tunnel.port") or labels.get("cloudflared.port") or labels.get("port")
                         )
                         valid_port = None
                         if port_label:
@@ -453,19 +469,16 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
                                 add_log(f"⚠️ Non-numeric port '{port_label}' for container '{c_name}'")
 
                         # Service URL assembly (precedence: modern > legacy)
-                        explicit_service = (
-                            labels.get('cf.tunnel.service')
-                            or labels.get('cloudflared.service')
-                        )
+                        explicit_service = labels.get("cf.tunnel.service") or labels.get("cloudflared.service")
                         if explicit_service and str(explicit_service).strip():
                             service_url = str(explicit_service).strip()
                         elif valid_port is not None:
                             service_url = f"{proto}://{c_name}:{valid_port}"
                         else:
-                            ports = c.get('Ports', [])
+                            ports = c.get("Ports", [])
                             inspected_port = None
                             if isinstance(ports, list) and ports and isinstance(ports[0], dict):
-                                ip = ports[0].get('PrivatePort')
+                                ip = ports[0].get("PrivatePort")
                                 if isinstance(ip, int) and 1 <= ip <= 65535:
                                     inspected_port = ip
                             if inspected_port:
@@ -490,34 +503,27 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
 
                         # Precedence: modern cf.tunnel.* > legacy cloudflared.* > bare shorthand
                         modern_notls = _parse_bool(
-                            labels.get('cf.tunnel.notlsverify')
-                            or labels.get('cf.tunnel.notls_verify')
-                            or labels.get('cf.tunnel.originRequest.noTLSVerify')
-                            or labels.get('cf.tunnel.origin_request.no_tls_verify')
+                            labels.get("cf.tunnel.notlsverify")
+                            or labels.get("cf.tunnel.notls_verify")
+                            or labels.get("cf.tunnel.originRequest.noTLSVerify")
+                            or labels.get("cf.tunnel.origin_request.no_tls_verify")
                         )
                         modern_tls = _parse_bool(
-                            labels.get('cf.tunnel.tls.verify')
-                            or labels.get('cf.tunnel.tls_verify')
+                            labels.get("cf.tunnel.tls.verify") or labels.get("cf.tunnel.tls_verify")
                         )
 
                         legacy_notls = _parse_bool(
-                            labels.get('cloudflared.notlsverify')
-                            or labels.get('cloudflared.notls_verify')
-                            or labels.get('cloudflared.originRequest.noTLSVerify')
-                            or labels.get('cloudflared.origin_request.no_tls_verify')
+                            labels.get("cloudflared.notlsverify")
+                            or labels.get("cloudflared.notls_verify")
+                            or labels.get("cloudflared.originRequest.noTLSVerify")
+                            or labels.get("cloudflared.origin_request.no_tls_verify")
                         )
                         legacy_tls = _parse_bool(
-                            labels.get('cloudflared.tls.verify')
-                            or labels.get('cloudflared.tls_verify')
+                            labels.get("cloudflared.tls.verify") or labels.get("cloudflared.tls_verify")
                         )
 
-                        shorthand_notls = _parse_bool(
-                            labels.get('notlsverify')
-                            or labels.get('no_tls_verify')
-                        )
-                        shorthand_tls = _parse_bool(
-                            labels.get('tls_verify')
-                        )
+                        shorthand_notls = _parse_bool(labels.get("notlsverify") or labels.get("no_tls_verify"))
+                        shorthand_tls = _parse_bool(labels.get("tls_verify"))
 
                         if modern_notls is not None:
                             no_tls_verify = modern_notls
@@ -539,30 +545,30 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
 
                         # Origin Server Name override (modern > legacy)
                         origin_server_name = (
-                            labels.get('cf.tunnel.originServerName')
-                            or labels.get('cf.tunnel.origin.server.name')
-                            or labels.get('cf.tunnel.origin_server_name')
-                            or labels.get('cloudflared.originServerName')
-                            or labels.get('cloudflared.origin.server.name')
-                            or labels.get('cloudflared.origin_server_name')
+                            labels.get("cf.tunnel.originServerName")
+                            or labels.get("cf.tunnel.origin.server.name")
+                            or labels.get("cf.tunnel.origin_server_name")
+                            or labels.get("cloudflared.originServerName")
+                            or labels.get("cloudflared.origin.server.name")
+                            or labels.get("cloudflared.origin_server_name")
                         )
                         if origin_server_name and str(origin_server_name).strip():
                             origin_request["originServerName"] = str(origin_server_name).strip()
 
                         # HTTP host header override (modern > legacy)
                         http_host_header = (
-                            labels.get('cf.tunnel.httpHostHeader')
-                            or labels.get('cf.tunnel.http.host.header')
-                            or labels.get('cf.tunnel.http_host_header')
-                            or labels.get('cloudflared.httpHostHeader')
-                            or labels.get('cloudflared.http.host.header')
-                            or labels.get('cloudflared.http_host_header')
+                            labels.get("cf.tunnel.httpHostHeader")
+                            or labels.get("cf.tunnel.http.host.header")
+                            or labels.get("cf.tunnel.http_host_header")
+                            or labels.get("cloudflared.httpHostHeader")
+                            or labels.get("cloudflared.http.host.header")
+                            or labels.get("cloudflared.http_host_header")
                         )
                         if http_host_header and str(http_host_header).strip():
                             origin_request["httpHostHeader"] = str(http_host_header).strip()
 
                         # Network Pre-flight Diagnostic
-                        c_nets = (c.get('NetworkSettings') or {}).get('Networks') or {}
+                        c_nets = (c.get("NetworkSettings") or {}).get("Networks") or {}
                         container_networks = set(c_nets.keys())
                         if container_networks and cloudflared_networks:
                             has_shared_net = bool(container_networks.intersection(cloudflared_networks))
@@ -570,9 +576,13 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
                             has_shared_net = True
 
                         if not has_shared_net:
-                            add_log(f"⚠️ Network Diagnostic: Container '{c_name}' is not attached to Cloudflare tunnel network '{expected_network}'. Requests to '{service_url}' will fail with 502 Bad Gateway!")
+                            add_log(
+                                f"⚠️ Network Diagnostic: Container '{c_name}' is not attached to Cloudflare tunnel network '{expected_network}'. Requests to '{service_url}' will fail with 502 Bad Gateway!"
+                            )
                             if require_shared_net:
-                                add_log(f"⛔ Excluding '{c_name}' from sync: REQUIRE_SHARED_NETWORK=true and shared network '{expected_network}' is missing.")
+                                add_log(
+                                    f"⛔ Excluding '{c_name}' from sync: REQUIRE_SHARED_NETWORK=true and shared network '{expected_network}' is missing."
+                                )
                                 is_tunneled = False
 
                         service_item = {
@@ -580,7 +590,7 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
                             "hostname": hostname,
                             "service": service_url,
                             "no_tls_verify": no_tls_verify,
-                            "network_connected": has_shared_net
+                            "network_connected": has_shared_net,
                         }
                         if not has_shared_net:
                             service_item["network_warning"] = f"Missing shared network '{expected_network}'"
@@ -590,15 +600,17 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
                         if is_tunneled:
                             services.append(service_item)
 
-                all_containers.append({
-                    "name": c_name,
-                    "image": image,
-                    "state": state,
-                    "status": status_text,
-                    "hostname": hostname if hostname else "-",
-                    "is_tunneled": is_tunneled,
-                    "network_connected": has_shared_net if 'has_shared_net' in locals() else True
-                })
+                all_containers.append(
+                    {
+                        "name": c_name,
+                        "image": image,
+                        "state": state,
+                        "status": status_text,
+                        "hostname": hostname if hostname else "-",
+                        "is_tunneled": is_tunneled,
+                        "network_connected": has_shared_net if "has_shared_net" in locals() else True,
+                    }
+                )
     except Exception as e:
         add_log(f"Docker API Error: {e}")
     return services, all_containers
@@ -698,10 +710,12 @@ def run_sync_logic():
             tunnel_id = tunnels[0]["id"]
         else:
             add_log(f"🔨 Creating Cloudflare Tunnel '{tunnel_name}'...")
-            cr_resp = cf_api(f"/accounts/{account_id}/cfd_tunnel", token, method="POST", data={
-                "name": tunnel_name,
-                "config_src": "cloudflare"
-            })
+            cr_resp = cf_api(
+                f"/accounts/{account_id}/cfd_tunnel",
+                token,
+                method="POST",
+                data={"name": tunnel_name, "config_src": "cloudflare"},
+            )
             tunnel_id = cr_resp["result"]["id"]
             add_log(f"✅ Created Tunnel: {tunnel_id}")
 
@@ -728,7 +742,7 @@ def run_sync_logic():
 
             try:
                 cf_target = find_cloudflared_container_name()
-                docker_api(f'/containers/{cf_target}/restart', method='POST')
+                docker_api(f"/containers/{cf_target}/restart", method="POST")
                 add_log(f"🔄 Triggered restart for cloudflared container ({cf_target})")
             except Exception as re:
                 add_log(f"Notice restarting cloudflared: {re}")
@@ -749,9 +763,12 @@ def run_sync_logic():
         ingress_rules = build_ingress_rules(services)
 
         if sync_state.get("_last_ingress") != ingress_rules:
-            cf_api(f"/accounts/{account_id}/cfd_tunnel/{tunnel_id}/configurations", token, method="PUT", data={
-                "config": {"ingress": ingress_rules}
-            })
+            cf_api(
+                f"/accounts/{account_id}/cfd_tunnel/{tunnel_id}/configurations",
+                token,
+                method="PUT",
+                data={"config": {"ingress": ingress_rules}},
+            )
             sync_state["_last_ingress"] = ingress_rules
             add_log("✅ Updated Cloudflare Tunnel Ingress rules")
 
@@ -762,13 +779,7 @@ def run_sync_logic():
             host = s["hostname"]
             dns_resp = cf_api(f"/zones/{zone_id}/dns_records?type=CNAME&name={host}", token)
             records = dns_resp.get("result", [])
-            dns_payload = {
-                "type": "CNAME",
-                "name": host,
-                "content": target_cname,
-                "proxied": True,
-                "ttl": 1
-            }
+            dns_payload = {"type": "CNAME", "name": host, "content": target_cname, "proxied": True, "ttl": 1}
             if records:
                 rec = records[0]
                 rec_id = rec["id"]
@@ -818,7 +829,15 @@ def run_sync_logic():
                         else:
                             remaining = int(grace_period - elapsed)
                             add_log(f"⏳ DNS record for {rec_name} preserved in tombstone ({remaining}s remaining)")
-                            synced_dns.append({"hostname": rec_name, "target": target_cname, "service": "tombstoned", "proxied": True, "tombstone_remaining": remaining})
+                            synced_dns.append(
+                                {
+                                    "hostname": rec_name,
+                                    "target": target_cname,
+                                    "service": "tombstoned",
+                                    "proxied": True,
+                                    "tombstone_remaining": remaining,
+                                }
+                            )
 
         sync_state["dns_records"] = synced_dns
         sync_state["status"] = "Active / Synced"
@@ -831,13 +850,17 @@ def run_sync_logic():
     finally:
         sync_lock.release()
 
+
 event_listener_thread: Optional[threading.Thread] = None
 event_stop_event: Optional[threading.Event] = None
+
 
 async def fallback_sync_loop():
     while True:
         try:
-            interval = int(os.getenv("SYNC_FALLBACK_INTERVAL", os.getenv("SYNC_INTERVAL", os.getenv("POLL_INTERVAL", 900))))
+            interval = int(
+                os.getenv("SYNC_FALLBACK_INTERVAL", os.getenv("SYNC_INTERVAL", os.getenv("POLL_INTERVAL", 900)))
+            )
             await asyncio.sleep(interval)
             add_log("Fallback periodic heartbeat sync triggered")
             await asyncio.to_thread(run_sync_logic)
@@ -846,7 +869,9 @@ async def fallback_sync_loop():
         except Exception as e:
             add_log(f"Unexpected loop exception: {e}")
 
+
 sync_loop = fallback_sync_loop
+
 
 @asynccontextmanager
 async def lifespan(fastapi_app: FastAPI):
@@ -863,7 +888,7 @@ async def lifespan(fastapi_app: FastAPI):
         target=listen_docker_events,
         args=(handle_docker_event, event_stop_event),
         daemon=True,
-        name="docker-events-listener"
+        name="docker-events-listener",
     )
     event_listener_thread.start()
 
@@ -876,18 +901,17 @@ async def lifespan(fastapi_app: FastAPI):
         event_stop_event.set()
     fallback_task.cancel()
 
+
 app = FastAPI(title="Cloudflare Tunnel & DNS Sync", lifespan=lifespan)
+
 
 @app.get("/health")
 @app.get("/healthz")
 def health():
     docker_ok = sync_state.get("docker_connected", True)
     status_str = "healthy" if docker_ok else "degraded"
-    return {
-        "status": status_str,
-        "docker_connected": docker_ok,
-        "sync_status": sync_state.get("status")
-    }
+    return {"status": status_str, "docker_connected": docker_ok, "sync_status": sync_state.get("status")}
+
 
 @app.get("/ready")
 def ready(response: Response = None):
@@ -897,10 +921,12 @@ def ready(response: Response = None):
     return {
         "status": "ready" if docker_ok else "not ready",
         "docker_connected": docker_ok,
-        "sync_status": sync_state.get("status")
+        "sync_status": sync_state.get("status"),
     }
 
+
 security = HTTPBasic(auto_error=False)
+
 
 def check_dashboard_auth(credentials: Optional[HTTPBasicCredentials] = Depends(security)) -> bool:
     user = os.getenv("DASHBOARD_USERNAME", os.getenv("BASIC_AUTH_USERNAME", "")).strip()
@@ -932,6 +958,7 @@ def check_dashboard_auth(credentials: Optional[HTTPBasicCredentials] = Depends(s
 
     return True
 
+
 @app.get("/", response_class=HTMLResponse)
 @app.get("/dashboard", response_class=HTMLResponse)
 def get_dashboard(authenticated: bool = Depends(check_dashboard_auth)):
@@ -939,16 +966,21 @@ def get_dashboard(authenticated: bool = Depends(check_dashboard_auth)):
     if os.path.exists(static_file):
         with open(static_file, "r", encoding="utf-8") as f:
             return HTMLResponse(content=f.read())
-    return HTMLResponse(content="<!DOCTYPE html><html><head><title>Cloudflare Tunnel Sync</title></head><body><h1>Cloudflare Tunnel Sync Dashboard</h1><p>Running in single-container mode. Access <a href='/api/status'>/api/status</a> for API data.</p></body></html>")
+    return HTMLResponse(
+        content="<!DOCTYPE html><html><head><title>Cloudflare Tunnel Sync</title></head><body><h1>Cloudflare Tunnel Sync Dashboard</h1><p>Running in single-container mode. Access <a href='/api/status'>/api/status</a> for API data.</p></body></html>"
+    )
+
 
 @app.get("/api/status")
 def api_status(authenticated: bool = Depends(check_dashboard_auth)):
     return JSONResponse(sync_state)
+
 
 @app.post("/api/sync")
 async def api_sync(authenticated: bool = Depends(check_dashboard_auth)):
     await asyncio.to_thread(run_sync_logic)
     return JSONResponse({"message": "Sync triggered", "state": sync_state})
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=8090)
