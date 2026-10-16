@@ -34,11 +34,11 @@ services:
     networks:
       - cf-tunnel-net
     healthcheck:
-      test: ["CMD", "python", "healthcheck.py"]
-      interval: 10s
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8090/health"]
+      interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 5s
+      start_period: 10s
 
   # Optional separate Nginx dashboard proxy (uncomment if legacy dual-container setup is desired)
   # cf-tunnel-dashboard:

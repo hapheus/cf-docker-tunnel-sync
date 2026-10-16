@@ -16,8 +16,33 @@ from fastapi import Depends, FastAPI, HTTPException, Response, status
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+LOG_LEVEL_NAME = os.getenv("LOG_LEVEL", "INFO").upper()
+LOG_LEVEL = getattr(logging, LOG_LEVEL_NAME, logging.INFO)
+logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("cf-tunnel-sync")
+logger.setLevel(LOG_LEVEL)
+
+
+class HealthCheckFilter(logging.Filter):
+    """Filter to suppress /health access logs unless LOG_LEVEL is DEBUG."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if os.getenv("LOG_LEVEL", "INFO").upper() == "DEBUG":
+            return True
+        try:
+            if record.args and len(record.args) >= 3:
+                req_path = str(record.args[2])
+                if req_path == "/health" or req_path.startswith("/health?"):
+                    return False
+            msg = record.getMessage()
+            if " /health " in msg or " /health?" in msg or '"/health"' in msg or '"/health ' in msg:
+                return False
+        except Exception:
+            pass
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(HealthCheckFilter())
 
 
 def get_domain_name() -> str:
@@ -878,6 +903,7 @@ async def lifespan(fastapi_app: FastAPI):
     global event_listener_thread, event_stop_event
     loop = asyncio.get_running_loop()
     debouncer.set_loop(loop)
+    logging.getLogger("uvicorn.access").addFilter(HealthCheckFilter())
 
     # Initial sync at startup
     asyncio.create_task(asyncio.to_thread(run_sync_logic))
