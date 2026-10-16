@@ -317,6 +317,7 @@ If you have a service running directly on your host machine (outside Docker) and
 | `DOCKER_RETRIES` | Max connection retries with exponential backoff on Docker socket requests. | `3` | No |
 | `DNS_CLEANUP_GRACE_PERIOD` | Grace period (in seconds) to retain DNS records for stopped containers before deletion against flapping. | `300` | No |
 | `DNS_IMMEDIATE_CLEANUP` | When set to `true`, immediately purges obsolete DNS records without tombstoning grace period. | `false` | No |
+| `REQUIRE_SHARED_NETWORK` | Strictly excludes containers from ingress routing if they do not share an internal network with cloudflared (prevents 502 Bad Gateway). | `false` | No |
 
 ---
 
