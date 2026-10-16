@@ -156,6 +156,7 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
                     labels.get('cf.tunnel.hostname')
                     or labels.get('cf.tunnel.domain')
                     or labels.get('cloudflared.hostname')
+                    or labels.get('cloudflared.domain')
                 )
                 hostname = str(raw_hostname).strip() if raw_hostname else ""
                 if "://" in hostname:
@@ -169,7 +170,12 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
                     matches_domain = (h_lower == configured_domain) or (h_lower.endswith("." + configured_domain))
 
                 # Optional tunnel scoping: if cf.tunnel.name is set, verify it matches CLOUDFLARE_TUNNEL_NAME
-                target_tunnel = labels.get('cf.tunnel.name') or labels.get('cf.tunnel.tunnel')
+                target_tunnel = (
+                    labels.get('cf.tunnel.name')
+                    or labels.get('cf.tunnel.tunnel')
+                    or labels.get('cloudflared.name')
+                    or labels.get('cloudflared.tunnel')
+                )
                 matches_tunnel = True
                 if target_tunnel:
                     matches_tunnel = (str(target_tunnel).strip() == configured_tunnel_name)
@@ -185,19 +191,29 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
                         seen_hostnames.add(h_lower)
                         is_tunneled = True
 
-                        # Protocol / Scheme
+                        # Protocol / Scheme (precedence: modern cf.tunnel.* > legacy cloudflared.* > bare shorthand)
                         raw_proto = (
                             labels.get('cf.tunnel.protocol')
                             or labels.get('cf.tunnel.proto')
                             or labels.get('cf.tunnel.scheme')
+                            or labels.get('cloudflared.protocol')
+                            or labels.get('cloudflared.proto')
+                            or labels.get('cloudflared.scheme')
+                            or labels.get('proto')
+                            or labels.get('protocol')
+                            or labels.get('scheme')
                             or 'http'
                         )
                         proto = str(raw_proto).strip().lower()
                         if proto not in ("http", "https", "tcp", "udp", "ssh", "rdp"):
                             proto = "http"
 
-                        # Port parsing and validation (1-65535)
-                        port_label = labels.get('cf.tunnel.port')
+                        # Port parsing and validation (precedence: modern > legacy > bare shorthand)
+                        port_label = (
+                            labels.get('cf.tunnel.port')
+                            or labels.get('cloudflared.port')
+                            or labels.get('port')
+                        )
                         valid_port = None
                         if port_label:
                             port_str = str(port_label).strip()
@@ -210,8 +226,11 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
                             else:
                                 add_log(f"⚠️ Non-numeric port '{port_label}' for container '{c_name}'")
 
-                        # Service URL assembly
-                        explicit_service = labels.get('cf.tunnel.service')
+                        # Service URL assembly (precedence: modern > legacy)
+                        explicit_service = (
+                            labels.get('cf.tunnel.service')
+                            or labels.get('cloudflared.service')
+                        )
                         if explicit_service and str(explicit_service).strip():
                             service_url = str(explicit_service).strip()
                         elif valid_port is not None:
@@ -223,7 +242,7 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
                                 ip = ports[0].get('PrivatePort')
                                 if isinstance(ip, int) and 1 <= ip <= 65535:
                                     inspected_port = ip
-                            if inspected_port is not None:
+                            if inspected_port:
                                 service_url = f"{proto}://{c_name}:{inspected_port}"
                             else:
                                 default_port = 443 if proto == "https" else 80
@@ -233,39 +252,85 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
                         origin_request = {}
                         no_tls_verify = False
 
-                        # Check cf.tunnel.notlsverify
-                        notls_label = labels.get('cf.tunnel.notlsverify') or labels.get('cf.tunnel.notls_verify')
-                        if notls_label is not None:
-                            val = str(notls_label).strip().lower()
-                            if val in ("true", "1", "yes"):
-                                no_tls_verify = True
+                        def _parse_bool(v):
+                            if v is None:
+                                return None
+                            s = str(v).strip().lower()
+                            if s in ("true", "1", "yes"):
+                                return True
+                            if s in ("false", "0", "no"):
+                                return False
+                            return None
 
-                        # Check cf.tunnel.tls.verify
-                        tls_verify_label = labels.get('cf.tunnel.tls.verify') or labels.get('cf.tunnel.tls_verify')
-                        if tls_verify_label is not None:
-                            val = str(tls_verify_label).strip().lower()
-                            if val in ("false", "0", "no"):
-                                no_tls_verify = True
-                            elif val in ("true", "1", "yes"):
-                                no_tls_verify = False
+                        # Precedence: modern cf.tunnel.* > legacy cloudflared.* > bare shorthand
+                        modern_notls = _parse_bool(
+                            labels.get('cf.tunnel.notlsverify')
+                            or labels.get('cf.tunnel.notls_verify')
+                            or labels.get('cf.tunnel.originRequest.noTLSVerify')
+                            or labels.get('cf.tunnel.origin_request.no_tls_verify')
+                        )
+                        modern_tls = _parse_bool(
+                            labels.get('cf.tunnel.tls.verify')
+                            or labels.get('cf.tunnel.tls_verify')
+                        )
+
+                        legacy_notls = _parse_bool(
+                            labels.get('cloudflared.notlsverify')
+                            or labels.get('cloudflared.notls_verify')
+                            or labels.get('cloudflared.originRequest.noTLSVerify')
+                            or labels.get('cloudflared.origin_request.no_tls_verify')
+                        )
+                        legacy_tls = _parse_bool(
+                            labels.get('cloudflared.tls.verify')
+                            or labels.get('cloudflared.tls_verify')
+                        )
+
+                        shorthand_notls = _parse_bool(
+                            labels.get('notlsverify')
+                            or labels.get('no_tls_verify')
+                        )
+                        shorthand_tls = _parse_bool(
+                            labels.get('tls_verify')
+                        )
+
+                        if modern_notls is not None:
+                            no_tls_verify = modern_notls
+                        elif modern_tls is not None:
+                            no_tls_verify = not modern_tls
+                        elif legacy_notls is not None:
+                            no_tls_verify = legacy_notls
+                        elif legacy_tls is not None:
+                            no_tls_verify = not legacy_tls
+                        elif shorthand_notls is not None:
+                            no_tls_verify = shorthand_notls
+                        elif shorthand_tls is not None:
+                            no_tls_verify = not shorthand_tls
+                        else:
+                            no_tls_verify = False
 
                         if no_tls_verify:
                             origin_request["noTLSVerify"] = True
 
-                        # SNI override
+                        # Origin Server Name override (modern > legacy)
                         origin_server_name = (
                             labels.get('cf.tunnel.originServerName')
                             or labels.get('cf.tunnel.origin.server.name')
                             or labels.get('cf.tunnel.origin_server_name')
+                            or labels.get('cloudflared.originServerName')
+                            or labels.get('cloudflared.origin.server.name')
+                            or labels.get('cloudflared.origin_server_name')
                         )
                         if origin_server_name and str(origin_server_name).strip():
                             origin_request["originServerName"] = str(origin_server_name).strip()
 
-                        # HTTP host header override
+                        # HTTP host header override (modern > legacy)
                         http_host_header = (
                             labels.get('cf.tunnel.httpHostHeader')
                             or labels.get('cf.tunnel.http.host.header')
                             or labels.get('cf.tunnel.http_host_header')
+                            or labels.get('cloudflared.httpHostHeader')
+                            or labels.get('cloudflared.http.host.header')
+                            or labels.get('cloudflared.http_host_header')
                         )
                         if http_host_header and str(http_host_header).strip():
                             origin_request["httpHostHeader"] = str(http_host_header).strip()
