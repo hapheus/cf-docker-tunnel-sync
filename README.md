@@ -311,6 +311,10 @@ If you have a service running directly on your host machine (outside Docker) and
 | `BASIC_AUTH_PASSWORD` | Dashboard password; required when authentication is enabled. | - | Conditional |
 | `DASHBOARD_BIND_ADDRESS` | Address used for the dashboard host port; set to `127.0.0.1` for local-only access. | `0.0.0.0` | No |
 | `DASHBOARD_PORT` | Dashboard host port. Change when running multiple stacks on one host. | `8080` | No |
+| `SYNC_DEBOUNCE_DELAY` | Coalescing debounce window (in seconds) for Docker container lifecycle events. | `2.5` | No |
+| `SYNC_FALLBACK_INTERVAL` | Periodic fallback sync heartbeat interval (in seconds). | `900` | No |
+| `DOCKER_TIMEOUT` | Docker socket connect and read timeout (in seconds). | `10` | No |
+| `DOCKER_RETRIES` | Max connection retries with exponential backoff on Docker socket requests. | `3` | No |
 
 ---
 
