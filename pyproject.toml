@@ -1,6 +1,6 @@
 [project]
 name = "cf-docker-tunnel-sync"
-version = "1.7.0"
+version = "1.8.0"
 description = "Automated Cloudflare Zero Trust Tunnel & DNS synchronization for Docker containers"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -11,13 +11,17 @@ authors = [
 dependencies = [
     "fastapi>=0.110.0",
     "uvicorn>=0.28.0",
+    "httpx>=0.27.0",
+    "pydantic>=2.0.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
     "pytest-cov>=4.1.0",
+    "pytest-asyncio>=0.23.0",
     "anyio>=4.0.0",
+    "respx>=0.21.0",
     "ruff>=0.3.0",
     "mypy>=1.9.0",
 ]
@@ -25,6 +29,7 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["cf-tunnel-sync"]
 python_files = ["test_*.py"]
+asyncio_mode = "auto"
 
 [tool.ruff]
 line-length = 120

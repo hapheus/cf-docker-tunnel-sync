@@ -7,12 +7,11 @@ import secrets
 import socket
 import threading
 import time
-import urllib.error
-import urllib.request
 from contextlib import asynccontextmanager
 from typing import Any, Callable, Dict, List, Optional
 
 import uvicorn
+from cloudflare import cf_api
 from fastapi import Depends, FastAPI, HTTPException, Response, status
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -276,64 +275,6 @@ def listen_docker_events(on_event: Callable[[dict], None], stop_event: Optional[
                     conn.close()
                 except Exception:
                     pass
-
-def cf_api(endpoint: str, token: str, method: str = 'GET', data: dict = None, paginate: bool = True, max_retries: int = 3) -> dict:
-    base_url = "https://api.cloudflare.com/client/v4"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
-
-    def _single_request(url: str, post_data: dict = None) -> dict:
-        body = json.dumps(post_data).encode('utf-8') if post_data is not None else None
-        req = urllib.request.Request(url, data=body, headers=headers, method=method)
-
-        for attempt in range(1, max_retries + 1):
-            try:
-                with urllib.request.urlopen(req) as resp:
-                    return json.loads(resp.read().decode('utf-8'))
-            except urllib.error.HTTPError as e:
-                if e.code == 429 and attempt < max_retries:
-                    retry_after = e.headers.get("Retry-After") if hasattr(e, "headers") and e.headers else None
-                    sleep_time = float(retry_after) if retry_after and retry_after.isdigit() else (0.2 * (2 ** (attempt - 1)))
-                    add_log(f"Cloudflare rate limit (429) on {url}, retrying in {sleep_time:.1f}s")
-                    time.sleep(sleep_time)
-                    continue
-
-                err_body = e.read().decode('utf-8')
-                try:
-                    err_json = json.loads(err_body)
-                    errors = err_json.get("errors", [])
-                    if errors:
-                        err_text = "; ".join(f"{err.get('message')} (code: {err.get('code')})" for err in errors)
-                        raise RuntimeError(f"Cloudflare API Error ({e.code}): {err_text}") from None
-                except (json.JSONDecodeError, AttributeError):
-                    pass
-                raise RuntimeError(f"Cloudflare HTTP {e.code}: {err_body}") from None
-
-    first_resp = _single_request(f"{base_url}{endpoint}", data)
-
-    # Auto-pagination for GET requests with result_info
-    if method == 'GET' and paginate and isinstance(first_resp, dict):
-        result_info = first_resp.get("result_info")
-        if isinstance(result_info, dict):
-            total_pages = result_info.get("total_pages", 1)
-            current_page = result_info.get("page", 1)
-            all_results = list(first_resp.get("result", []))
-
-            while current_page < total_pages:
-                current_page += 1
-                delim = "&" if "?" in endpoint else "?"
-                page_endpoint = f"{endpoint}{delim}page={current_page}"
-                next_resp = _single_request(f"{base_url}{page_endpoint}")
-                if isinstance(next_resp, dict) and isinstance(next_resp.get("result"), list):
-                    all_results.extend(next_resp["result"])
-                else:
-                    break
-
-            first_resp["result"] = all_results
-
-    return first_resp
 
 def find_cloudflared_container_name() -> str:
     """Resolve the cloudflared container name or ID dynamically."""

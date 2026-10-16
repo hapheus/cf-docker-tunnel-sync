@@ -1,10 +1,10 @@
-import io
 import os
 import unittest
-import urllib.error
 from unittest.mock import MagicMock, patch
 
 import app
+import httpx
+import respx
 
 
 class TestAppSyncLogic(unittest.TestCase):
@@ -151,13 +151,14 @@ class TestAppSyncLogic(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True):
             self.assertNotEqual(app.get_domain_name(), "fraha.dev")
 
-    @patch("urllib.request.urlopen")
-    def test_cf_api_error_formatting(self, mock_urlopen):
+    @respx.mock
+    def test_cf_api_error_formatting(self):
         """cf_api should parse Cloudflare error response body and format helpful message"""
-        err_json = b'{"success": false, "errors": [{"code": 10000, "message": "Authentication error"}]}'
-        fp = io.BytesIO(err_json)
-        mock_urlopen.side_effect = urllib.error.HTTPError(
-            "https://api.cloudflare.com", 400, "Bad Request", {}, fp
+        respx.get("https://api.cloudflare.com/client/v4/zones").mock(
+            return_value=httpx.Response(
+                400,
+                json={"success": False, "errors": [{"code": 10000, "message": "Authentication error"}]},
+            )
         )
         with self.assertRaises(RuntimeError) as ctx:
             app.cf_api("/zones", "bad-token")
