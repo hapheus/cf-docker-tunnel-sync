@@ -100,8 +100,9 @@ class TestResilientDockerSocket(unittest.TestCase):
     @patch("builtins.open", MagicMock())
     @patch("os.makedirs", MagicMock())
     @patch("app.cf_api")
+    @patch("app.docker_api", return_value=[])
     @patch("app.get_docker_containers")
-    def test_sync_logic_aborts_on_docker_disconnect(self, mock_get_containers, mock_cf_api):
+    def test_sync_logic_aborts_on_docker_disconnect(self, mock_get_containers, mock_docker_api, mock_cf_api):
         """Verify run_sync_logic aborts and does not modify Cloudflare when docker is degraded."""
         app.sync_state["docker_connected"] = False
         mock_get_containers.return_value = ([], [])
