@@ -34,10 +34,7 @@ class TestTLSServiceAndLabels(unittest.TestCase):
             {
                 "Names": ["/secure-vault"],
                 "State": "running",
-                "Labels": {
-                    "cf.tunnel.hostname": "vault.example.com",
-                    "cf.tunnel.service": "https://secure-vault:8200"
-                }
+                "Labels": {"cf.tunnel.hostname": "vault.example.com", "cf.tunnel.service": "https://secure-vault:8200"},
             }
         ]
         with patch.dict(os.environ, {"DOMAIN_NAME": "example.com"}, clear=True):
@@ -57,8 +54,8 @@ class TestTLSServiceAndLabels(unittest.TestCase):
                 "Labels": {
                     "cf.tunnel.hostname": "ssl.example.com",
                     "cf.tunnel.port": "8443",
-                    "cf.tunnel.proto": "https"
-                }
+                    "cf.tunnel.proto": "https",
+                },
             }
         ]
         with patch.dict(os.environ, {"DOMAIN_NAME": "example.com"}, clear=True):
@@ -68,7 +65,7 @@ class TestTLSServiceAndLabels(unittest.TestCase):
         # Target expectation: when scheme/proto is https, service should start with https://
         self.assertTrue(
             services[0]["service"].startswith("https://"),
-            f"Expected https:// origin service, got: {services[0]['service']}"
+            f"Expected https:// origin service, got: {services[0]['service']}",
         )
 
     # =========================================================================
@@ -85,8 +82,8 @@ class TestTLSServiceAndLabels(unittest.TestCase):
                 "Labels": {
                     "cf.tunnel.hostname": "selfsigned.example.com",
                     "cf.tunnel.service": "https://self-signed-service:443",
-                    "cf.tunnel.notlsverify": "true"
-                }
+                    "cf.tunnel.notlsverify": "true",
+                },
             }
         ]
         with patch.dict(os.environ, {"DOMAIN_NAME": "example.com"}, clear=True):
@@ -95,7 +92,7 @@ class TestTLSServiceAndLabels(unittest.TestCase):
         self.assertEqual(len(services), 1)
         self.assertTrue(
             services[0].get("no_tls_verify") or services[0].get("noTLSVerify"),
-            "Expected no_tls_verify flag to be true in discovered service"
+            "Expected no_tls_verify flag to be true in discovered service",
         )
 
     @patch("app.cf_api")
@@ -114,10 +111,10 @@ class TestTLSServiceAndLabels(unittest.TestCase):
                     "container": "vault",
                     "hostname": "vault.example.com",
                     "service": "https://vault:8200",
-                    "no_tls_verify": True
+                    "no_tls_verify": True,
                 }
             ],
-            []
+            [],
         )
         mock_docker_api.return_value = [{"Names": ["/cloudflared"], "State": "running"}]
 
@@ -147,8 +144,7 @@ class TestTLSServiceAndLabels(unittest.TestCase):
             app.run_sync_logic()
 
         put_calls = [
-            c for c in mock_cf_api.call_args_list
-            if c[1].get("method") == "PUT" and "/configurations" in c[0][0]
+            c for c in mock_cf_api.call_args_list if c[1].get("method") == "PUT" and "/configurations" in c[0][0]
         ]
         self.assertEqual(len(put_calls), 1)
         config_data = put_calls[0][1].get("data", {})
@@ -176,10 +172,10 @@ class TestTLSServiceAndLabels(unittest.TestCase):
                     "container": "plain-web",
                     "hostname": "web.example.com",
                     "service": "http://plain-web:80",
-                    "no_tls_verify": False
+                    "no_tls_verify": False,
                 }
             ],
-            []
+            [],
         )
         mock_docker_api.return_value = [{"Names": ["/cloudflared"], "State": "running"}]
 
@@ -209,8 +205,7 @@ class TestTLSServiceAndLabels(unittest.TestCase):
             app.run_sync_logic()
 
         put_calls = [
-            c for c in mock_cf_api.call_args_list
-            if c[1].get("method") == "PUT" and "/configurations" in c[0][0]
+            c for c in mock_cf_api.call_args_list if c[1].get("method") == "PUT" and "/configurations" in c[0][0]
         ]
         self.assertEqual(len(put_calls), 1)
         ingress = put_calls[0][1].get("data", {}).get("config", {}).get("ingress", [])
@@ -231,11 +226,8 @@ class TestTLSServiceAndLabels(unittest.TestCase):
             {
                 "Names": ["/bad-port"],
                 "State": "running",
-                "Labels": {
-                    "cf.tunnel.hostname": "badport.example.com",
-                    "cf.tunnel.port": "not-a-number"
-                },
-                "Ports": [{"PrivatePort": 8080}]
+                "Labels": {"cf.tunnel.hostname": "badport.example.com", "cf.tunnel.port": "not-a-number"},
+                "Ports": [{"PrivatePort": 8080}],
             }
         ]
         with patch.dict(os.environ, {"DOMAIN_NAME": "example.com"}, clear=True):
@@ -251,10 +243,7 @@ class TestTLSServiceAndLabels(unittest.TestCase):
             {
                 "Names": ["/out-of-range"],
                 "State": "running",
-                "Labels": {
-                    "cf.tunnel.hostname": "range.example.com",
-                    "cf.tunnel.port": "99999"
-                }
+                "Labels": {"cf.tunnel.hostname": "range.example.com", "cf.tunnel.port": "99999"},
             }
         ]
         with patch.dict(os.environ, {"DOMAIN_NAME": "example.com"}, clear=True):
@@ -270,10 +259,7 @@ class TestTLSServiceAndLabels(unittest.TestCase):
             {
                 "Names": ["/scheme-in-host"],
                 "State": "running",
-                "Labels": {
-                    "cf.tunnel.hostname": "https://clean.example.com",
-                    "cf.tunnel.port": "80"
-                }
+                "Labels": {"cf.tunnel.hostname": "https://clean.example.com", "cf.tunnel.port": "80"},
             }
         ]
         with patch.dict(os.environ, {"DOMAIN_NAME": "example.com"}, clear=True):
@@ -282,7 +268,7 @@ class TestTLSServiceAndLabels(unittest.TestCase):
         if services:
             self.assertFalse(
                 services[0]["hostname"].startswith("http://") or services[0]["hostname"].startswith("https://"),
-                f"Hostname should be stripped of protocol scheme, got: {services[0]['hostname']}"
+                f"Hostname should be stripped of protocol scheme, got: {services[0]['hostname']}",
             )
 
     @patch("app.docker_api")
@@ -292,10 +278,7 @@ class TestTLSServiceAndLabels(unittest.TestCase):
             {
                 "Names": ["/empty-host"],
                 "State": "running",
-                "Labels": {
-                    "cf.tunnel.hostname": "   ",
-                    "cf.tunnel.port": "80"
-                }
+                "Labels": {"cf.tunnel.hostname": "   ", "cf.tunnel.port": "80"},
             }
         ]
         with patch.dict(os.environ, {"DOMAIN_NAME": "example.com"}, clear=True):
@@ -310,39 +293,28 @@ class TestTLSServiceAndLabels(unittest.TestCase):
             {
                 "Names": ["/app-v1"],
                 "State": "running",
-                "Labels": {
-                    "cf.tunnel.hostname": "dup.example.com",
-                    "cf.tunnel.port": "8080"
-                }
+                "Labels": {"cf.tunnel.hostname": "dup.example.com", "cf.tunnel.port": "8080"},
             },
             {
                 "Names": ["/app-v2"],
                 "State": "running",
-                "Labels": {
-                    "cf.tunnel.hostname": "dup.example.com",
-                    "cf.tunnel.port": "8081"
-                }
-            }
+                "Labels": {"cf.tunnel.hostname": "dup.example.com", "cf.tunnel.port": "8081"},
+            },
         ]
         with patch.dict(os.environ, {"DOMAIN_NAME": "example.com"}, clear=True):
             services, _ = app.get_docker_containers()
 
         hosts = [s["hostname"] for s in services]
         self.assertEqual(
-            len(hosts), len(set(hosts)),
-            "Duplicate hostnames must be deduplicated to prevent Cloudflare API 400 rejection"
+            len(hosts),
+            len(set(hosts)),
+            "Duplicate hostnames must be deduplicated to prevent Cloudflare API 400 rejection",
         )
 
     @patch("app.docker_api")
     def test_none_labels_handled_gracefully(self, mock_docker_api):
         """TC-INV-06: Container with Labels=None should not throw AttributeError."""
-        mock_docker_api.return_value = [
-            {
-                "Names": ["/no-labels-container"],
-                "State": "running",
-                "Labels": None
-            }
-        ]
+        mock_docker_api.return_value = [{"Names": ["/no-labels-container"], "State": "running", "Labels": None}]
         with patch.dict(os.environ, {"DOMAIN_NAME": "example.com"}, clear=True):
             try:
                 services, all_c = app.get_docker_containers()
@@ -351,6 +323,7 @@ class TestTLSServiceAndLabels(unittest.TestCase):
 
         self.assertEqual(len(services), 0)
         self.assertEqual(len(all_c), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

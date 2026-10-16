@@ -47,6 +47,7 @@ class CloudflareClient:
                         logger.warning(msg)
                         try:
                             import app
+
                             app.add_log(msg)
                         except Exception:
                             pass
@@ -136,6 +137,7 @@ class CloudflareClient:
                         logger.warning(msg)
                         try:
                             import app
+
                             app.add_log(msg)
                         except Exception:
                             pass
@@ -196,6 +198,7 @@ class CloudflareClient:
 
 # Global default client instance
 default_cf_client = CloudflareClient()
+
 
 def cf_api(
     endpoint: str,

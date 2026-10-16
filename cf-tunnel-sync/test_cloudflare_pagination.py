@@ -26,8 +26,12 @@ class TestCloudflarePaginationAndRateLimit(unittest.TestCase):
             "result_info": {"page": 3, "per_page": 2, "total_pages": 3, "count": 1, "total_count": 5},
         }
 
-        r3 = respx.get(f"{self.base_url}/zones", params={"page": "3"}).mock(return_value=httpx.Response(200, json=page3))
-        r2 = respx.get(f"{self.base_url}/zones", params={"page": "2"}).mock(return_value=httpx.Response(200, json=page2))
+        r3 = respx.get(f"{self.base_url}/zones", params={"page": "3"}).mock(
+            return_value=httpx.Response(200, json=page3)
+        )
+        r2 = respx.get(f"{self.base_url}/zones", params={"page": "2"}).mock(
+            return_value=httpx.Response(200, json=page2)
+        )
         r1 = respx.get(f"{self.base_url}/zones", params={}).mock(return_value=httpx.Response(200, json=page1))
 
         data = app.cf_api("/zones", "fake-token", method="GET")
@@ -56,7 +60,11 @@ class TestCloudflarePaginationAndRateLimit(unittest.TestCase):
         """Verify HTTP 429 triggers backoff retry and succeeds upon next attempt."""
         r = respx.get(f"{self.base_url}/zones").mock(
             side_effect=[
-                httpx.Response(429, headers={"Retry-After": "0"}, json={"errors": [{"code": 10014, "message": "Rate limit exceeded"}]}),
+                httpx.Response(
+                    429,
+                    headers={"Retry-After": "0"},
+                    json={"errors": [{"code": 10014, "message": "Rate limit exceeded"}]},
+                ),
                 httpx.Response(200, json={"result": [{"id": "ok-1"}], "result_info": {"page": 1, "total_pages": 1}}),
             ]
         )
@@ -72,7 +80,9 @@ class TestCloudflarePaginationAndRateLimit(unittest.TestCase):
     def test_cf_api_rate_limit_exhaustion(self):
         """Verify HTTP 429 raises RuntimeError when all retries are exhausted."""
         r = respx.get(f"{self.base_url}/zones").mock(
-            return_value=httpx.Response(429, headers={"Retry-After": "0"}, json={"errors": [{"code": 10014, "message": "Rate limit exceeded"}]})
+            return_value=httpx.Response(
+                429, headers={"Retry-After": "0"}, json={"errors": [{"code": 10014, "message": "Rate limit exceeded"}]}
+            )
         )
 
         with self.assertRaises(RuntimeError) as ctx:

@@ -116,12 +116,15 @@ class TestResilientDockerSocket(unittest.TestCase):
         app.sync_state["docker_connected"] = False
         mock_get_containers.return_value = ([], [])
 
-        with patch.dict(os.environ, {
-            "CLOUDFLARE_API_TOKEN": "fake-token",
-            "CLOUDFLARE_ACCOUNT_ID": "fake-acc",
-            "CLOUDFLARE_TUNNEL_NAME": "fake-tunnel",
-            "DOMAIN_NAME": "example.com"
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "CLOUDFLARE_API_TOKEN": "fake-token",
+                "CLOUDFLARE_ACCOUNT_ID": "fake-acc",
+                "CLOUDFLARE_TUNNEL_NAME": "fake-tunnel",
+                "DOMAIN_NAME": "example.com",
+            },
+        ):
             mock_cf_api.return_value = {"result": [{"id": "tun-123", "name": "fake-tunnel"}]}
             app.run_sync_logic()
 

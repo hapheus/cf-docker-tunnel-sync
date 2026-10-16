@@ -38,14 +38,17 @@ class TestDNSTombstoningAndGracePeriod(unittest.TestCase):
 
         mock_cf_api.side_effect = fake_cf_api
 
-        with patch.dict(os.environ, {
-            "CLOUDFLARE_API_TOKEN": "fake-token",
-            "CLOUDFLARE_ACCOUNT_ID": "fake-acc",
-            "CLOUDFLARE_ZONE_ID": "zone-123",
-            "CLOUDFLARE_TUNNEL_NAME": "fake-tunnel",
-            "DOMAIN_NAME": "example.com",
-            "DNS_CLEANUP_GRACE_PERIOD": "300"
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "CLOUDFLARE_API_TOKEN": "fake-token",
+                "CLOUDFLARE_ACCOUNT_ID": "fake-acc",
+                "CLOUDFLARE_ZONE_ID": "zone-123",
+                "CLOUDFLARE_TUNNEL_NAME": "fake-tunnel",
+                "DOMAIN_NAME": "example.com",
+                "DNS_CLEANUP_GRACE_PERIOD": "300",
+            },
+        ):
             app.run_sync_logic()
 
         self.assertIn("app.example.com", app.sync_state["tombstones"])
@@ -62,9 +65,10 @@ class TestDNSTombstoningAndGracePeriod(unittest.TestCase):
         """Verify that when a container recovers before grace period, its tombstone is cleared."""
         app.sync_state["tombstones"]["app.example.com"] = time.time() - 50
 
-        mock_get_containers.return_value = ([
-            {"container": "app", "hostname": "app.example.com", "service": "http://app:80", "originRequest": {}}
-        ], [])
+        mock_get_containers.return_value = (
+            [{"container": "app", "hostname": "app.example.com", "service": "http://app:80", "originRequest": {}}],
+            [],
+        )
 
         def fake_cf_api(endpoint, token, method="GET", data=None, **kwargs):
             if "/zones?" in endpoint:
@@ -72,21 +76,33 @@ class TestDNSTombstoningAndGracePeriod(unittest.TestCase):
             if "cfd_tunnel?" in endpoint:
                 return {"result": [{"id": "tun-123", "name": "fake-tunnel"}]}
             if "/dns_records?type=CNAME&name=app.example.com" in endpoint:
-                return {"result": [{"id": "rec-1", "name": "app.example.com", "content": "tun-123.cfargotunnel.com", "proxied": True}]}
+                return {
+                    "result": [
+                        {
+                            "id": "rec-1",
+                            "name": "app.example.com",
+                            "content": "tun-123.cfargotunnel.com",
+                            "proxied": True,
+                        }
+                    ]
+                }
             if "/dns_records?type=CNAME&content=" in endpoint:
                 return {"result": [{"id": "rec-1", "name": "app.example.com", "content": "tun-123.cfargotunnel.com"}]}
             return {"result": {}}
 
         mock_cf_api.side_effect = fake_cf_api
 
-        with patch.dict(os.environ, {
-            "CLOUDFLARE_API_TOKEN": "fake-token",
-            "CLOUDFLARE_ACCOUNT_ID": "fake-acc",
-            "CLOUDFLARE_ZONE_ID": "zone-123",
-            "CLOUDFLARE_TUNNEL_NAME": "fake-tunnel",
-            "DOMAIN_NAME": "example.com",
-            "DNS_CLEANUP_GRACE_PERIOD": "300"
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "CLOUDFLARE_API_TOKEN": "fake-token",
+                "CLOUDFLARE_ACCOUNT_ID": "fake-acc",
+                "CLOUDFLARE_ZONE_ID": "zone-123",
+                "CLOUDFLARE_TUNNEL_NAME": "fake-tunnel",
+                "DOMAIN_NAME": "example.com",
+                "DNS_CLEANUP_GRACE_PERIOD": "300",
+            },
+        ):
             app.run_sync_logic()
 
         self.assertNotIn("app.example.com", app.sync_state["tombstones"])
@@ -113,14 +129,17 @@ class TestDNSTombstoningAndGracePeriod(unittest.TestCase):
 
         mock_cf_api.side_effect = fake_cf_api
 
-        with patch.dict(os.environ, {
-            "CLOUDFLARE_API_TOKEN": "fake-token",
-            "CLOUDFLARE_ACCOUNT_ID": "fake-acc",
-            "CLOUDFLARE_ZONE_ID": "zone-123",
-            "CLOUDFLARE_TUNNEL_NAME": "fake-tunnel",
-            "DOMAIN_NAME": "example.com",
-            "DNS_CLEANUP_GRACE_PERIOD": "300"
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "CLOUDFLARE_API_TOKEN": "fake-token",
+                "CLOUDFLARE_ACCOUNT_ID": "fake-acc",
+                "CLOUDFLARE_ZONE_ID": "zone-123",
+                "CLOUDFLARE_TUNNEL_NAME": "fake-tunnel",
+                "DOMAIN_NAME": "example.com",
+                "DNS_CLEANUP_GRACE_PERIOD": "300",
+            },
+        ):
             app.run_sync_logic()
 
         delete_calls = [call for call in mock_cf_api.call_args_list if call.kwargs.get("method") == "DELETE"]
@@ -144,19 +163,24 @@ class TestDNSTombstoningAndGracePeriod(unittest.TestCase):
             if "cfd_tunnel?" in endpoint:
                 return {"result": [{"id": "tun-123", "name": "fake-tunnel"}]}
             if "/dns_records?type=CNAME&content=" in endpoint:
-                return {"result": [{"id": "rec-fast", "name": "fast.example.com", "content": "tun-123.cfargotunnel.com"}]}
+                return {
+                    "result": [{"id": "rec-fast", "name": "fast.example.com", "content": "tun-123.cfargotunnel.com"}]
+                }
             return {"result": {}}
 
         mock_cf_api.side_effect = fake_cf_api
 
-        with patch.dict(os.environ, {
-            "CLOUDFLARE_API_TOKEN": "fake-token",
-            "CLOUDFLARE_ACCOUNT_ID": "fake-acc",
-            "CLOUDFLARE_ZONE_ID": "zone-123",
-            "CLOUDFLARE_TUNNEL_NAME": "fake-tunnel",
-            "DOMAIN_NAME": "example.com",
-            "DNS_IMMEDIATE_CLEANUP": "true"
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "CLOUDFLARE_API_TOKEN": "fake-token",
+                "CLOUDFLARE_ACCOUNT_ID": "fake-acc",
+                "CLOUDFLARE_ZONE_ID": "zone-123",
+                "CLOUDFLARE_TUNNEL_NAME": "fake-tunnel",
+                "DOMAIN_NAME": "example.com",
+                "DNS_IMMEDIATE_CLEANUP": "true",
+            },
+        ):
             app.run_sync_logic()
 
         delete_calls = [call for call in mock_cf_api.call_args_list if call.kwargs.get("method") == "DELETE"]

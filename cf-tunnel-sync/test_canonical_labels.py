@@ -21,8 +21,8 @@ class TestCanonicalLabelsAndDeprecation(unittest.TestCase):
                 "Labels": {
                     "cf.tunnel.hostname": "api.example.com",
                     "cf.tunnel.port": "8080",
-                    "cf.tunnel.protocol": "http"
-                }
+                    "cf.tunnel.protocol": "http",
+                },
             }
         ]
 
@@ -44,8 +44,8 @@ class TestCanonicalLabelsAndDeprecation(unittest.TestCase):
                     "cloudflared.hostname": "legacy.example.com",
                     "cloudflared.port": "5000",
                     "proto": "https",
-                    "notlsverify": "true"
-                }
+                    "notlsverify": "true",
+                },
             }
         ]
 

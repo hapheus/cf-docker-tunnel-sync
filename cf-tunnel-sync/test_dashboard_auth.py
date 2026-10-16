@@ -26,10 +26,7 @@ class TestDashboardAuthenticationAndSingleContainer(unittest.TestCase):
 
     def test_auth_enabled_rejects_missing_credentials(self):
         """Verify that 401 Unauthorized is raised when credentials are missing and auth is configured."""
-        with patch.dict(os.environ, {
-            "BASIC_AUTH_USERNAME": "admin",
-            "BASIC_AUTH_PASSWORD": "secretpassword"
-        }):
+        with patch.dict(os.environ, {"BASIC_AUTH_USERNAME": "admin", "BASIC_AUTH_PASSWORD": "secretpassword"}):
             with self.assertRaises(HTTPException) as ctx:
                 app.check_dashboard_auth(None)
 
@@ -38,10 +35,7 @@ class TestDashboardAuthenticationAndSingleContainer(unittest.TestCase):
 
     def test_auth_enabled_rejects_invalid_credentials(self):
         """Verify that 401 Unauthorized is raised on incorrect credentials."""
-        with patch.dict(os.environ, {
-            "DASHBOARD_USERNAME": "admin",
-            "DASHBOARD_PASSWORD": "correctpassword"
-        }):
+        with patch.dict(os.environ, {"DASHBOARD_USERNAME": "admin", "DASHBOARD_PASSWORD": "correctpassword"}):
             bad_creds = HTTPBasicCredentials(username="admin", password="wrongpassword")
             with self.assertRaises(HTTPException) as ctx:
                 app.check_dashboard_auth(bad_creds)
@@ -50,30 +44,23 @@ class TestDashboardAuthenticationAndSingleContainer(unittest.TestCase):
 
     def test_auth_enabled_accepts_valid_credentials(self):
         """Verify that valid credentials authenticate successfully."""
-        with patch.dict(os.environ, {
-            "DASHBOARD_USERNAME": "admin",
-            "DASHBOARD_PASSWORD": "supersecretpassword"
-        }):
+        with patch.dict(os.environ, {"DASHBOARD_USERNAME": "admin", "DASHBOARD_PASSWORD": "supersecretpassword"}):
             valid_creds = HTTPBasicCredentials(username="admin", password="supersecretpassword")
             auth_ok = app.check_dashboard_auth(valid_creds)
             self.assertTrue(auth_ok)
 
     def test_auth_disabled_via_explicit_toggle(self):
         """Verify DASHBOARD_AUTH_ENABLED=false allows access even if credentials exist in environment."""
-        with patch.dict(os.environ, {
-            "DASHBOARD_AUTH_ENABLED": "false",
-            "BASIC_AUTH_USERNAME": "admin",
-            "BASIC_AUTH_PASSWORD": "password123"
-        }):
+        with patch.dict(
+            os.environ,
+            {"DASHBOARD_AUTH_ENABLED": "false", "BASIC_AUTH_USERNAME": "admin", "BASIC_AUTH_PASSWORD": "password123"},
+        ):
             auth_ok = app.check_dashboard_auth(None)
             self.assertTrue(auth_ok)
 
     def test_health_endpoints_remain_unauthenticated(self):
         """Verify /health and /ready never require authentication even with auth enabled."""
-        with patch.dict(os.environ, {
-            "DASHBOARD_USERNAME": "admin",
-            "DASHBOARD_PASSWORD": "password123"
-        }):
+        with patch.dict(os.environ, {"DASHBOARD_USERNAME": "admin", "DASHBOARD_PASSWORD": "password123"}):
             # health and ready take no credentials parameter and must return 200
             h = app.health()
             self.assertEqual(h["status"], "healthy")
