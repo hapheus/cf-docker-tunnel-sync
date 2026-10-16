@@ -1,7 +1,8 @@
-import unittest
-from unittest.mock import patch, MagicMock
 import os
 import time
+import unittest
+from unittest.mock import MagicMock, patch
+
 import app
 
 

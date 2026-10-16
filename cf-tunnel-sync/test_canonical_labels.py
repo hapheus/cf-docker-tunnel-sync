@@ -1,6 +1,7 @@
+import os
 import unittest
 from unittest.mock import patch
-import os
+
 import app
 
 
@@ -51,11 +52,11 @@ class TestCanonicalLabelsAndDeprecation(unittest.TestCase):
         with patch.dict(os.environ, {"DOMAIN_NAME": "example.com"}):
             # First sync run
             services, _ = app.get_docker_containers()
-            deprecation_logs_1 = [l for l in app.sync_state["logs"] if "Deprecation Notice" in l]
+            deprecation_logs_1 = [entry for entry in app.sync_state["logs"] if "Deprecation Notice" in entry]
 
             # Second sync run with identical container
             app.get_docker_containers()
-            deprecation_logs_2 = [l for l in app.sync_state["logs"] if "Deprecation Notice" in l]
+            deprecation_logs_2 = [entry for entry in app.sync_state["logs"] if "Deprecation Notice" in entry]
 
         # Verified service was parsed correctly with backward compatibility
         self.assertEqual(len(services), 1)
@@ -65,8 +66,8 @@ class TestCanonicalLabelsAndDeprecation(unittest.TestCase):
 
         # Warnings were emitted on first run
         self.assertGreater(len(deprecation_logs_1), 0)
-        self.assertTrue(any("cloudflared.hostname" in l for l in deprecation_logs_1))
-        self.assertTrue(any("proto" in l for l in deprecation_logs_1))
+        self.assertTrue(any("cloudflared.hostname" in entry for entry in deprecation_logs_1))
+        self.assertTrue(any("proto" in entry for entry in deprecation_logs_1))
 
         # Warnings were NOT duplicated on second run
         self.assertEqual(len(deprecation_logs_1), len(deprecation_logs_2))

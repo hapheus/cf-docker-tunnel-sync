@@ -1,7 +1,8 @@
-import unittest
-from unittest.mock import patch, MagicMock
-import socket
 import os
+import socket
+import unittest
+from unittest.mock import MagicMock, patch
+
 import app
 from fastapi import Response, status
 

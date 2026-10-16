@@ -1,9 +1,9 @@
-import unittest
-from unittest.mock import patch, MagicMock
 import asyncio
-import io
 import threading
 import time
+import unittest
+from unittest.mock import MagicMock, patch
+
 import app
 
 

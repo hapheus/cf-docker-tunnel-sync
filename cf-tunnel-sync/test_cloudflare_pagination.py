@@ -1,8 +1,9 @@
-import unittest
-from unittest.mock import patch, MagicMock
-import urllib.error
 import io
 import json
+import unittest
+import urllib.error
+from unittest.mock import MagicMock, patch
+
 import app
 
 

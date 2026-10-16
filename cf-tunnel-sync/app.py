@@ -1,21 +1,21 @@
-import os
-import json
-import time
 import asyncio
-import threading
-import logging
-import urllib.request
-import urllib.error
-import socket
 import http.client
-from contextlib import asynccontextmanager
-from typing import List, Dict, Any, Optional, Callable
-
-from fastapi import FastAPI, Response, Depends, HTTPException, status
-from fastapi.responses import JSONResponse, HTMLResponse
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
+import json
+import logging
+import os
 import secrets
+import socket
+import threading
+import time
+import urllib.error
+import urllib.request
+from contextlib import asynccontextmanager
+from typing import Any, Callable, Dict, List, Optional
+
 import uvicorn
+from fastapi import Depends, FastAPI, HTTPException, Response, status
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("cf-tunnel-sync")
@@ -784,7 +784,7 @@ def run_sync_logic():
             with open(token_path, "w", encoding="utf-8") as f:
                 f.write(tunnel_token)
             add_log("🔑 Updated Cloudflare Tunnel Token in shared volume")
-            
+
             try:
                 cf_target = find_cloudflared_container_name()
                 docker_api(f'/containers/{cf_target}/restart', method='POST')
@@ -800,7 +800,7 @@ def run_sync_logic():
             return
         sync_state["discovered_services"] = services
         sync_state["all_containers"] = all_containers
-        
+
         discovered_names = [f"{s['hostname']} ({s['service']})" for s in services]
         add_log(f"🔍 Discovered Cloudflare-labeled services: {', '.join(discovered_names) if services else 'None'}")
 

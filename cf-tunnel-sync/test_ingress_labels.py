@@ -6,10 +6,12 @@ Covers:
 3. Invalid / malformed Docker label resilience & sanitation
 """
 
-import unittest
-from unittest.mock import patch, MagicMock
 import os
+import unittest
+from unittest.mock import MagicMock, patch
+
 import app
+
 
 class TestTLSServiceAndLabels(unittest.TestCase):
     def setUp(self):
