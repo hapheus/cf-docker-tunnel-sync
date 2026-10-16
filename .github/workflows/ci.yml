@@ -135,6 +135,7 @@ jobs:
           docker run -d \
             --name test-cf-dashboard \
             -p 8080:80 \
+            --add-host cf-tunnel-sync:127.0.0.1 \
             -e DASHBOARD_AUTH_ENABLED=true \
             -e BASIC_AUTH_USERNAME=admin \
             -e BASIC_AUTH_PASSWORD=testpassword123 \
