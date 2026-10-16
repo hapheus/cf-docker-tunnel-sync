@@ -500,5 +500,48 @@ class TestAppSyncLogic(unittest.TestCase):
         self.assertNotIn("originRequest", catch_all)
 
 
+class TestHealthCheckLoggingFilter(unittest.TestCase):
+    def setUp(self):
+        self.filter = app.HealthCheckFilter()
+
+    def test_healthcheck_filter_suppresses_health_in_info_mode(self):
+        with patch.dict(os.environ, {"LOG_LEVEL": "INFO"}):
+            record = MagicMock()
+            record.args = ("127.0.0.1:54321", "GET", "/health", "1.1", 200)
+            self.assertFalse(self.filter.filter(record))
+
+            record_query = MagicMock()
+            record_query.args = ("127.0.0.1:54321", "GET", "/health?verbose=1", "1.1", 200)
+            self.assertFalse(self.filter.filter(record_query))
+
+    def test_healthcheck_filter_allows_other_endpoints_in_info_mode(self):
+        with patch.dict(os.environ, {"LOG_LEVEL": "INFO"}):
+            record_status = MagicMock()
+            record_status.args = ("127.0.0.1:54321", "GET", "/api/status", "1.1", 200)
+            self.assertTrue(self.filter.filter(record_status))
+
+            record_records = MagicMock()
+            record_records.args = ("127.0.0.1:54321", "GET", "/api/records", "1.1", 200)
+            self.assertTrue(self.filter.filter(record_records))
+
+    def test_healthcheck_filter_allows_health_in_debug_mode(self):
+        with patch.dict(os.environ, {"LOG_LEVEL": "DEBUG"}):
+            record = MagicMock()
+            record.args = ("127.0.0.1:54321", "GET", "/health", "1.1", 200)
+            self.assertTrue(self.filter.filter(record))
+
+    def test_healthcheck_filter_fallback_message_matching(self):
+        with patch.dict(os.environ, {"LOG_LEVEL": "INFO"}):
+            record = MagicMock()
+            record.args = None
+            record.getMessage.return_value = '127.0.0.1:54321 - "GET /health HTTP/1.1" 200 OK'
+            self.assertFalse(self.filter.filter(record))
+
+            record_normal = MagicMock()
+            record_normal.args = None
+            record_normal.getMessage.return_value = '127.0.0.1:54321 - "GET /api/status HTTP/1.1" 200 OK'
+            self.assertTrue(self.filter.filter(record_normal))
+
+
 if __name__ == "__main__":
     unittest.main()
