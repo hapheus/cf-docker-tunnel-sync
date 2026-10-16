@@ -8,6 +8,7 @@
     uv = {
       enable = true;
       sync.enable = true;
+      sync.allExtras = true;
     };
   };
 
