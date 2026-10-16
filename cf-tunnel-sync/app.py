@@ -9,9 +9,9 @@ import urllib.error
 import socket
 import http.client
 from contextlib import asynccontextmanager
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, Callable
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response, status
 from fastapi.responses import JSONResponse
 import uvicorn
 
@@ -32,7 +32,8 @@ sync_state = {
     "discovered_services": [],
     "all_containers": [],
     "dns_records": [],
-    "logs": []
+    "logs": [],
+    "docker_connected": True
 }
 
 def add_log(msg: str):
@@ -45,32 +46,233 @@ def add_log(msg: str):
 
 
 class UnixHTTPConnection(http.client.HTTPConnection):
-    def __init__(self, socket_path):
-        super().__init__('localhost')
+    def __init__(self, socket_path: str, timeout: Optional[float] = 10.0):
+        super().__init__('localhost', timeout=timeout)
         self.socket_path = socket_path
+        self.timeout = timeout
 
     def connect(self):
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        if self.timeout is not None:
+            self.sock.settimeout(self.timeout)
         self.sock.connect(self.socket_path)
 
-def docker_api(path: str, method: str = 'GET', data: dict = None) -> dict:
-    conn = UnixHTTPConnection('/var/run/docker.sock')
-    headers = {}
-    body = None
-    if data is not None:
-        headers['Content-Type'] = 'application/json'
-        body = json.dumps(data).encode('utf-8')
-    
-    conn.request(method, path, body=body, headers=headers)
-    resp = conn.getresponse()
-    resp_data = resp.read().decode('utf-8')
-    conn.close()
-    if resp_data:
+def docker_api(path: str, method: str = 'GET', data: dict = None, timeout: Optional[float] = None, retries: Optional[int] = None) -> Any:
+    socket_path = os.getenv("DOCKER_SOCKET", os.getenv("DOCKER_SOCKET_PATH", "/var/run/docker.sock"))
+    if not os.path.exists(socket_path):
+        sync_state["docker_connected"] = False
+        return []
+
+    if timeout is None:
         try:
-            return json.loads(resp_data)
-        except Exception:
-            return {"raw": resp_data}
-    return {}
+            timeout = float(os.getenv("DOCKER_TIMEOUT", 10.0))
+        except ValueError:
+            timeout = 10.0
+
+    if retries is None:
+        try:
+            retries = int(os.getenv("DOCKER_RETRIES", 3))
+        except ValueError:
+            retries = 3
+
+    last_error = None
+    for attempt in range(1, retries + 1):
+        conn = None
+        try:
+            conn = UnixHTTPConnection(socket_path, timeout=timeout)
+            body = None
+            headers = {}
+            if data is not None:
+                body = json.dumps(data).encode('utf-8')
+                headers['Content-Type'] = 'application/json'
+                headers['Content-Length'] = str(len(body))
+
+            conn.request(method, path, body=body, headers=headers)
+            resp = conn.getresponse()
+            resp_data = resp.read().decode('utf-8')
+            sync_state["docker_connected"] = True
+            if resp_data:
+                try:
+                    return json.loads(resp_data)
+                except Exception:
+                    return {"raw": resp_data}
+            return {}
+        except (socket.timeout, TimeoutError) as e:
+            last_error = e
+            sync_state["docker_connected"] = False
+            add_log(f"Docker API timeout on {path} (attempt {attempt}/{retries}): {e}")
+            if attempt < retries:
+                time.sleep(0.1 * (2 ** (attempt - 1)))
+        except (socket.error, http.client.HTTPException, ConnectionError, OSError) as e:
+            last_error = e
+            sync_state["docker_connected"] = False
+            add_log(f"Docker API error on {path} (attempt {attempt}/{retries}): {e}")
+            if attempt < retries:
+                time.sleep(0.1 * (2 ** (attempt - 1)))
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+    sync_state["docker_connected"] = False
+    add_log(f"Docker API failed after {retries} retries: {last_error}")
+    return []
+
+# Event-driven Debouncer & Stream Listener
+CONTAINER_LIFECYCLE_ACTIONS = {
+    "start", "stop", "die", "kill", "destroy", "rename", "pause", "unpause", "restart"
+}
+
+class DebouncedSyncTrigger:
+    def __init__(self, delay: float = 2.5, max_delay: float = 10.0, sync_target: Optional[Callable] = None):
+        self.delay = delay
+        self.max_delay = max_delay
+        self.sync_target = sync_target
+        self._timer_task: Optional[asyncio.Task] = None
+        self._first_event_time: Optional[float] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._lock = threading.Lock()
+
+    def set_loop(self, loop: asyncio.AbstractEventLoop):
+        self._loop = loop
+
+    def trigger(self, reason: str = ""):
+        with self._lock:
+            now = time.time()
+            if self._first_event_time is None:
+                self._first_event_time = now
+
+            target_loop = self._loop
+            if target_loop is None or not target_loop.is_running():
+                try:
+                    target_loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    pass
+
+            if target_loop and target_loop.is_running():
+                target_loop.call_soon_threadsafe(self._schedule_debounce, reason)
+
+    def _schedule_debounce(self, reason: str):
+        now = time.time()
+        if self._timer_task and not self._timer_task.done():
+            if self._first_event_time and (now - self._first_event_time) >= self.max_delay:
+                return
+            self._timer_task.cancel()
+
+        self._timer_task = asyncio.create_task(self._debounce_coro(reason))
+
+    async def _debounce_coro(self, reason: str):
+        try:
+            await asyncio.sleep(self.delay)
+            with self._lock:
+                self._first_event_time = None
+            add_log(f"Debounce window elapsed ({self.delay}s), executing sync: {reason}")
+            if self.sync_target:
+                if asyncio.iscoroutinefunction(self.sync_target):
+                    await self.sync_target()
+                else:
+                    await asyncio.to_thread(self.sync_target)
+            else:
+                await asyncio.to_thread(run_sync_logic)
+        except asyncio.CancelledError:
+            pass
+
+DEBOUNCE_DELAY = float(os.getenv("SYNC_DEBOUNCE_DELAY", 2.5))
+DEBOUNCE_MAX_DELAY = float(os.getenv("SYNC_DEBOUNCE_MAX_DELAY", 10.0))
+debouncer = DebouncedSyncTrigger(delay=DEBOUNCE_DELAY, max_delay=DEBOUNCE_MAX_DELAY)
+
+def handle_docker_event(event: dict):
+    if not isinstance(event, dict):
+        return
+    event_type = event.get("Type", "container")
+    if event_type and event_type != "container":
+        return
+
+    action = event.get("Action", event.get("status", ""))
+    base_action = action.split(":")[0].strip().lower()
+    if base_action in CONTAINER_LIFECYCLE_ACTIONS:
+        actor = event.get("Actor", {})
+        attrs = actor.get("Attributes", {}) if isinstance(actor, dict) else {}
+        container_name = attrs.get("name", event.get("id", "unknown")[:12])
+        add_log(f"Container lifecycle event: {base_action} for {container_name}")
+        debouncer.trigger(f"{base_action}:{container_name}")
+
+def listen_docker_events(on_event: Callable[[dict], None], stop_event: Optional[threading.Event] = None, socket_path: Optional[str] = None):
+    if socket_path is None:
+        socket_path = os.getenv("DOCKER_SOCKET", os.getenv("DOCKER_SOCKET_PATH", "/var/run/docker.sock"))
+
+    backoff = 1.0
+    max_backoff = 30.0
+
+    while stop_event is None or not stop_event.is_set():
+        if not os.path.exists(socket_path):
+            sync_state["docker_connected"] = False
+            add_log(f"Docker socket not found at {socket_path}, retrying in {backoff:.1f}s")
+            if stop_event:
+                if stop_event.wait(backoff):
+                    break
+            else:
+                time.sleep(backoff)
+            backoff = min(backoff * 2, max_backoff)
+            continue
+
+        conn = None
+        try:
+            conn = UnixHTTPConnection(socket_path, timeout=None)
+            query = "/events?filters=%7B%22type%22%3A%5B%22container%22%5D%7D"
+            conn.request("GET", query)
+            resp = conn.getresponse()
+
+            if resp.status != 200:
+                sync_state["docker_connected"] = False
+                add_log(f"Docker /events returned HTTP {resp.status}, retrying in {backoff:.1f}s")
+                if stop_event:
+                    if stop_event.wait(backoff):
+                        break
+                else:
+                    time.sleep(backoff)
+                backoff = min(backoff * 2, max_backoff)
+                continue
+
+            sync_state["docker_connected"] = True
+            backoff = 1.0
+            add_log("Connected to Docker /events stream")
+
+            buffer = ""
+            while stop_event is None or not stop_event.is_set():
+                chunk = resp.read(1024)
+                if not chunk:
+                    add_log("Docker /events stream closed by daemon (EOF)")
+                    break
+                buffer += chunk.decode("utf-8", errors="replace")
+                while "\n" in buffer:
+                    line, buffer = buffer.split("\n", 1)
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        parsed = json.loads(line)
+                        if on_event:
+                            on_event(parsed)
+                    except json.JSONDecodeError:
+                        pass
+        except Exception as e:
+            sync_state["docker_connected"] = False
+            add_log(f"Docker /events stream error: {e}")
+            if stop_event:
+                if stop_event.wait(backoff):
+                    break
+            else:
+                time.sleep(backoff)
+            backoff = min(backoff * 2, max_backoff)
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
 def cf_api(endpoint: str, token: str, method: str = 'GET', data: dict = None) -> dict:
     url = f"https://api.cloudflare.com/client/v4{endpoint}"
@@ -490,6 +692,10 @@ def run_sync_logic():
 
         # 4. Discover Docker services
         services, all_containers = get_docker_containers()
+        if not sync_state.get("docker_connected", True):
+            add_log("Aborting sync: Docker daemon connection is degraded or unreachable")
+            sync_state["status"] = "Docker connection degraded"
+            return
         sync_state["discovered_services"] = services
         sync_state["all_containers"] = all_containers
         
@@ -550,26 +756,65 @@ def run_sync_logic():
     finally:
         sync_lock.release()
 
-async def sync_loop():
+event_listener_thread: Optional[threading.Thread] = None
+event_stop_event: Optional[threading.Event] = None
+
+async def fallback_sync_loop():
     while True:
         try:
+            interval = int(os.getenv("SYNC_FALLBACK_INTERVAL", os.getenv("SYNC_INTERVAL", os.getenv("POLL_INTERVAL", 900))))
+            await asyncio.sleep(interval)
+            add_log("Fallback periodic heartbeat sync triggered")
             await asyncio.to_thread(run_sync_logic)
+        except asyncio.CancelledError:
+            break
         except Exception as e:
             add_log(f"Unexpected loop exception: {e}")
-        await asyncio.sleep(int(os.getenv("SYNC_INTERVAL", 30)))
+
+sync_loop = fallback_sync_loop
 
 @asynccontextmanager
 async def lifespan(fastapi_app: FastAPI):
-    task = asyncio.create_task(sync_loop())
+    global event_listener_thread, event_stop_event
+    loop = asyncio.get_running_loop()
+    debouncer.set_loop(loop)
+
+    # Initial sync at startup
+    asyncio.create_task(asyncio.to_thread(run_sync_logic))
+
+    # Event stream listener
+    event_stop_event = threading.Event()
+    event_listener_thread = threading.Thread(
+        target=listen_docker_events,
+        args=(handle_docker_event, event_stop_event),
+        daemon=True,
+        name="docker-events-listener"
+    )
+    event_listener_thread.start()
+
+    # Fallback sync loop
+    fallback_task = asyncio.create_task(fallback_sync_loop())
+
     yield
-    task.cancel()
+
+    if event_stop_event:
+        event_stop_event.set()
+    fallback_task.cancel()
 
 app = FastAPI(title="Cloudflare Tunnel & DNS Sync", lifespan=lifespan)
 
 @app.get("/health")
 @app.get("/healthz")
-def health():
-    return {"status": "healthy", "sync_status": sync_state["status"]}
+def health(response: Response = None):
+    docker_ok = sync_state.get("docker_connected", True)
+    status_str = "healthy" if docker_ok else "unhealthy"
+    if response and not docker_ok:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    return {
+        "status": status_str,
+        "docker_connected": docker_ok,
+        "sync_status": sync_state["status"]
+    }
 
 @app.get("/api/status")
 def api_status():
