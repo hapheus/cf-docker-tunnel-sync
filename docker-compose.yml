@@ -22,14 +22,15 @@ services:
       - CLOUDFLARE_TUNNEL_NAME=${CLOUDFLARE_TUNNEL_NAME:-cf-docker-tunnel-sync}
       - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-}
       - CLOUDFLARED_CONTAINER_NAME=${CLOUDFLARED_CONTAINER_NAME:-}
+      - DASHBOARD_AUTH_ENABLED=${DASHBOARD_AUTH_ENABLED:-true}
+      - BASIC_AUTH_USERNAME=${BASIC_AUTH_USERNAME:-}
+      - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-}
       - POLL_INTERVAL=30
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - cf_token_data:/etc/cloudflared
-    # The unauthenticated API is intentionally only reachable inside this
-    # Compose network. Access it through the dashboard proxy when needed.
-    expose:
-      - "8090"
+    ports:
+      - "${DASHBOARD_BIND_ADDRESS:-0.0.0.0}:${DASHBOARD_PORT:-8080}:8090"
     networks:
       - cf-tunnel-net
     healthcheck:
@@ -39,33 +40,30 @@ services:
       retries: 3
       start_period: 5s
 
-  cf-tunnel-dashboard:
-    image: hapheus/cf-tunnel-dashboard:latest
-    build:
-      context: ./cf-tunnel-dashboard
-      dockerfile: Dockerfile
-    restart: always
-    environment:
-      - DASHBOARD_AUTH_ENABLED=${DASHBOARD_AUTH_ENABLED:-true}
-      - BASIC_AUTH_USERNAME=${BASIC_AUTH_USERNAME:-}
-      - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-}
-    ports:
-      - "${DASHBOARD_BIND_ADDRESS:-0.0.0.0}:${DASHBOARD_PORT:-8080}:80"
-    networks:
-      - cf-tunnel-net
-    depends_on:
-      cf-tunnel-sync:
-        condition: service_healthy
-    # Optional: expose the dashboard through the Cloudflare Tunnel.
-    # labels:
-    #   - "cf.tunnel.hostname=tunnel-sync.${DOMAIN_NAME}"
-    #   - "cf.tunnel.port=80"
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 2s
+  # Optional separate Nginx dashboard proxy (uncomment if legacy dual-container setup is desired)
+  # cf-tunnel-dashboard:
+  #   image: hapheus/cf-tunnel-dashboard:latest
+  #   build:
+  #     context: ./cf-tunnel-dashboard
+  #     dockerfile: Dockerfile
+  #   restart: always
+  #   environment:
+  #     - DASHBOARD_AUTH_ENABLED=${DASHBOARD_AUTH_ENABLED:-true}
+  #     - BASIC_AUTH_USERNAME=${BASIC_AUTH_USERNAME}
+  #     - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD}
+  #   ports:
+  #     - "${DASHBOARD_BIND_ADDRESS:-0.0.0.0}:8081:80"
+  #   networks:
+  #     - cf-tunnel-net
+  #   depends_on:
+  #     cf-tunnel-sync:
+  #       condition: service_healthy
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1/health || exit 1"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 3
+  #     start_period: 2s
 
   # Example Service (uncomment to test)
   # web-example:
@@ -83,4 +81,3 @@ networks:
 
 volumes:
   cf_token_data:
-

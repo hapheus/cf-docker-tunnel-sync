@@ -11,8 +11,10 @@ import http.client
 from contextlib import asynccontextmanager
 from typing import List, Dict, Any, Optional, Callable
 
-from fastapi import FastAPI, Response, status
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Response, Depends, HTTPException, status
+from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+import secrets
 import uvicorn
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -957,12 +959,53 @@ def ready(response: Response = None):
         "sync_status": sync_state.get("status")
     }
 
+security = HTTPBasic(auto_error=False)
+
+def check_dashboard_auth(credentials: Optional[HTTPBasicCredentials] = Depends(security)) -> bool:
+    user = os.getenv("DASHBOARD_USERNAME", os.getenv("BASIC_AUTH_USERNAME", "")).strip()
+    pwd = os.getenv("DASHBOARD_PASSWORD", os.getenv("BASIC_AUTH_PASSWORD", "")).strip()
+    auth_enabled_env = os.getenv("DASHBOARD_AUTH_ENABLED", "").strip().lower()
+
+    if auth_enabled_env in ("false", "0", "no"):
+        return True
+
+    if not user and not pwd:
+        return True
+
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": 'Basic realm="Cloudflare Tunnel Sync Dashboard"'},
+        )
+
+    is_user_ok = secrets.compare_digest(credentials.username.encode("utf-8"), user.encode("utf-8"))
+    is_pwd_ok = secrets.compare_digest(credentials.password.encode("utf-8"), pwd.encode("utf-8"))
+
+    if not (is_user_ok and is_pwd_ok):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": 'Basic realm="Cloudflare Tunnel Sync Dashboard"'},
+        )
+
+    return True
+
+@app.get("/", response_class=HTMLResponse)
+@app.get("/dashboard", response_class=HTMLResponse)
+def get_dashboard(authenticated: bool = Depends(check_dashboard_auth)):
+    static_file = os.path.join(os.path.dirname(__file__), "static", "index.html")
+    if os.path.exists(static_file):
+        with open(static_file, "r", encoding="utf-8") as f:
+            return HTMLResponse(content=f.read())
+    return HTMLResponse(content="<!DOCTYPE html><html><head><title>Cloudflare Tunnel Sync</title></head><body><h1>Cloudflare Tunnel Sync Dashboard</h1><p>Running in single-container mode. Access <a href='/api/status'>/api/status</a> for API data.</p></body></html>")
+
 @app.get("/api/status")
-def api_status():
+def api_status(authenticated: bool = Depends(check_dashboard_auth)):
     return JSONResponse(sync_state)
 
 @app.post("/api/sync")
-async def api_sync():
+async def api_sync(authenticated: bool = Depends(check_dashboard_auth)):
     await asyncio.to_thread(run_sync_logic)
     return JSONResponse({"message": "Sync triggered", "state": sync_state})
 
