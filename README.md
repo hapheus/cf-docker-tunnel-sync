@@ -2,409 +2,257 @@
 
 [![CI Test & Smoke Gate](https://github.com/hapheus/cf-docker-tunnel-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/hapheus/cf-docker-tunnel-sync/actions/workflows/ci.yml)
 [![Docker Pulls](https://img.shields.io/docker/pulls/hapheus/cf-tunnel-sync?logo=docker&logoColor=white)](https://hub.docker.com/r/hapheus/cf-tunnel-sync)
-[![GitHub Release](https://img.shields.io/github/v/release/hapheus/cf-docker-tunnel-sync?include_prereleases&logo=github)](https://github.com/hapheus/cf-docker-tunnel-sync/releases)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Platform Support](https://img.shields.io/badge/platform-linux%2Famd64%20%7C%20linux%2Farm64-lightgrey?logo=linux)](https://hub.docker.com/r/hapheus/cf-tunnel-sync)
+[![GitHub Release](https://img.shields.io/github/v/release/hapheus/cf-docker-tunnel-sync?logo=github&logoColor=white)](https://github.com/hapheus/cf-docker-tunnel-sync/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg?logo=python&logoColor=white)](pyproject.toml)
 
-Automatically sync Docker containers with Cloudflare Tunnels (Zero Trust). Just add labels to your Docker containers, and this tool handles tunnel creation, Cloudflare ingress rules, and proxied DNS CNAME records automatically.
+> **Expose your existing Docker Compose services through Cloudflare Tunnel — without manually configuring ingress rules or DNS records.**
 
-```text
-                  Internet (HTTPS Requests)
-                             │
-                             ▼
-                  Cloudflare Edge Network
-                             │
-                             ▼ (Zero Trust Encrypted Tunnel)
-    ┌────────────────────────┼───────────────────────────────┐
-    │ Docker Host            ▼                               │
-    │                 ┌─────────────┐                        │
-    │                 │ cloudflared │                        │
-    │                 └──────┬──────┘                        │
-    │                        │                               │
-    │      Docker Network:   │ cf-tunnel-net                 │
-    │      ┌─────────────────┼────────────────────────┐      │
-    │      ▼                 ▼                        ▼      │
-    │ ┌──────────┐    ┌──────────────┐         ┌───────────┐ │
-    │ │  my-app  │    │  vaultwarden │         │ (any app) │ │
-    │ └──────────┘    └──────────────┘         └───────────┘ │
-    │                                                        │
-    │ ┌────────────────────────────────────────────────────┐ │
-    │ │ cf-tunnel-sync (Central Agent & Embedded Dashboard)│ │
-    │ │  • Listens to Docker socket /events (Real-time)    │ │
-    │ │  • Coalescing Debouncer & Healthcheck              │ │
-    │ │  • Updates Cloudflare Tunnel Ingress & DNS         │ │
-    │ │  • Web UI on Port 8090 (Host: 8080) with Basic Auth│ │
-    │ └──────────────────────┬─────────────────────────────┘ │
-    │                        │                               │
-    └────────────────────────┼───────────────────────────────┘
-                             ▼
-                    /var/run/docker.sock
+---
+
+## 🛡️ Compatibility & Security Promise
+
+- **Zero Inbound Firewall Ports:** No port forwarding on your router (`80`, `443`, etc.), no public static IP, and no UPnP required.
+- **Zero Host Port Bindings:** Origin application containers run entirely without publishing host ports (`ports:` block is optional or completely removed).
+- **Non-Intrusive Integration:** Works with your existing Docker Compose setups out of the box — add two container labels and one shared bridge network.
+
+---
+
+## 🏗️ Architecture: Before & After
+
+```
+Traditional / Manual Setup:
+Internet ---> Router (Open Port 80/443) ---> Host IP:Port ---> Container
+                  ⚠️ Requires public IP, dynamic DNS, port forwarding, and manual certificates.
+
+cf-docker-tunnel-sync Gateway Architecture:
+Internet ---> Cloudflare Edge ---> [Outbound Encrypted Tunnel]
+                                              |
+                   +--------------------------v---------------------------+
+                   | Docker Host                                          |
+                   |   +----------------------------------------------+   |
+                   |   | Gateway Stack (Headless)                     |   |
+                   |   |   • cloudflared (tunnel connector)           |   |
+                   |   |   • cf-tunnel-sync (DNS & route automation)  |   |
+                   |   +----------------------+-----------------------+   |
+                   |                          |                           |
+                   |         Docker Bridge Network (cf-tunnel-net)        |
+                   |                          |                           |
+                   |   +----------------------v-----------------------+   |
+                   |   | Your Existing Application Containers         |   |
+                   |   |   • whoami / nextcloud / vaultwarden         |   |
+                   |   |   • Zero exposed host ports                  |   |
+                   |   +----------------------------------------------+   |
+                   +------------------------------------------------------+
 ```
 
 ---
 
-## 📸 Screenshots & Previews
+## ⚡ 3-Step Success Path
 
-| Web Dashboard (Desktop Overview) | Mobile Responsive UI |
-|:---:|:---:|
-| ![Web Dashboard Preview](docs/screenshots/dashboard-preview.png) | ![Mobile View](docs/screenshots/dashboard-mobile.png) |
+Expose any existing Compose service to the world in three simple steps.
 
-> 💡 **Quickstart:** Looking for a fast walkthrough under 10 minutes? Check out the [10-Minute Canonical Quickstart Guide](QUICKSTART.md).  
-> ⚡ **Simplicity First — Headless by Design**: `cf-tunnel-sync` runs primarily as an autonomous background daemon with zero open ports. Visual status monitoring is 100% optional via the companion container [`hapheus/cf-tunnel-dashboard`](https://hub.docker.com/r/hapheus/cf-tunnel-dashboard) or direct port mapping.
+### Step 1: Create a Scoped Cloudflare API Token
 
----
+Go to **Cloudflare Dashboard → My Profile → API Tokens → Create Token → Custom Token**:
 
-## ✨ Features
+- **Permissions:**
+  - `Account` → `Cloudflare Tunnel` → `Edit`
+  - `Zone` → `DNS` → `Edit`
+  - `Zone` → `Zone` → `Read`
+- **Account Resources:** `Include` → `All accounts` (or your specific account)
+- **Zone Resources:** `Include` → `All zones` (or your target domain)
 
-- 🔍 **Non-Mutating Preflight Mode:** Run `python app.py --preflight` or set `PREFLIGHT_ONLY=true` to validate Docker socket connectivity, token permissions, and tunnel existence without mutating live records.
-- 🔬 **6-Stage Truthful Diagnostics:** Evaluates syntax, domain match, network topology, Cloudflare ingress, DNS, and origin health with zero misleading statuses.
-- 🔮 **Predictive Dry-Run & ChangePlan API:** Audit pending actions before live synchronization via `--dry-run`, `DRY_RUN=true`, or `GET /api/change-plan`.
-- 🛡️ **Blast-Radius Protection:** Automatic deletion budget guard (`MAX_DELETIONS_PER_SYNC=3`) prevents catastrophic route wiping on Docker restart, with explicit override (`ALLOW_MASS_DELETIONS=true`).
+![Cloudflare Token Setup](docs/screenshots/cloudflare-token-setup.png)
 
-- ⚡ **Event-Driven Docker Discovery:** Listens directly to the Docker socket stream (`/events`) for instantaneous synchronization when containers start, stop, or restart.
-- 🎛️ **Coalescing Debouncer:** Buffers rapid container bursts (e.g., `docker compose up` launching multiple services) to prevent Cloudflare API rate-limiting.
-- 🛡️ **Embedded Status Dashboard:** Lightweight FastAPI web UI served directly on internal port `8090` (host `8080`) with built-in HTTP Basic Auth and fail-closed security.
-- 🌐 **Automated Ingress & DNS:** Automatically provisions Cloudflare Tunnel ingress configurations and proxied DNS CNAME records.
-- ⏳ **Graceful DNS Tombstoning:** When containers stop, tunnel ingress rules are removed immediately, while DNS records are retained in tombstone for a grace period (default 5m) to prevent DNS flapping during container reboots or updates.
-- 🔒 **Zero Inbound Ports:** Keep your firewall fully closed—traffic flows securely through Cloudflare Zero Trust Tunnels.
-- 🏷️ **Clean Labeling:** Configure hostnames, internal ports, HTTPS origins, self-signed TLS verification, and path routing using clean `cf.tunnel.*` labels.
-- 🏢 **Multi-Account & Multi-Tunnel Support:** Seamlessly route different containers across different Cloudflare accounts or tunnel instances on a single Docker host.
-- 🩺 **Hermetic Healthchecks:** Native Python container healthcheck ensuring both the local Docker connection and Cloudflare API reachability are operational.
+> 💡 **Where do I find my Account ID?**  
+> In your Cloudflare dashboard, select your domain under **Websites**, scroll down on the **Overview** page, and copy **Account ID** from the right sidebar.
 
 ---
 
-## 🔑 Step 1: Cloudflare API Token Setup
+### Step 2: Deploy the Headless Gateway Stack
 
-`cf-docker-tunnel-sync` requires an API Token to manage your Cloudflare Tunnels and DNS records.
-
-1. Go to the [Cloudflare Dashboard → My Profile → API Tokens](https://dash.cloudflare.com/profile/api-tokens).
-2. Click **Create Token** → Select **Create Custom Token**.
-3. Name your token (e.g., `Docker-Tunnel-Sync`).
-4. Configure the following **Permissions**:
-   - `Zone` → `DNS` → `Edit` *(Required to create and prune CNAME records)*
-   - `Zone` → `Zone` → `Read` *(Required to look up Zone IDs for your domain)*
-   - `Account` → `Cloudflare Tunnel` → `Edit` *(Required to manage Tunnels, credentials, and ingress configurations)*
-5. Under **Zone Resources**:
-   - Include → `All zones` (or select your specific domain).
-6. Under **Account Resources**:
-   - Include → `All accounts` (or select your specific Cloudflare account).
-7. Click **Continue to summary** → **Create Token** and save your generated token.
-
----
-
-## 🛠️ Step 2: Deployment
-
-`cf-docker-tunnel-sync` is deployed as a **central gateway stack** on your Docker host.
-
-### 1. Configure Environment Variables
-Copy `.env.example` to `.env`:
-```bash
-cp .env.example .env
-```
-
-Edit `.env` and fill in your details:
-```env
-DOMAIN_NAME=yourdomain.com
-CLOUDFLARE_API_TOKEN=your_copied_api_token_here
-CLOUDFLARE_TUNNEL_NAME=my-pi-tunnel
-
-# Embedded Web Dashboard Authentication
-DASHBOARD_AUTH_ENABLED=true
-DASHBOARD_USERNAME=admin
-DASHBOARD_PASSWORD=choose_a_strong_password
-
-# Host Port Mapping
-DASHBOARD_PORT=8080
-```
-
-### 2. Run the Central Gateway Stack
-Create a `docker-compose.yml` file:
+Create a dedicated directory for your gateway (e.g., `~/stacks/gateway/docker-compose.yml`):
 
 ```yaml
 services:
   cloudflared:
     image: cloudflare/cloudflared:latest
-    restart: always
-    command: tunnel --no-autoupdate --protocol ${CLOUDFLARED_PROTOCOL:-auto} run --token-file /etc/cloudflared/token
-    volumes:
-      - cf_token_data:/etc/cloudflared
+    container_name: cloudflared
+    restart: unless-stopped
+    command: tunnel run --token ${CLOUDFLARED_TUNNEL_TOKEN}
     networks:
       - cf-tunnel-net
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
 
   cf-tunnel-sync:
     image: hapheus/cf-tunnel-sync:latest
-    restart: always
+    container_name: cf-tunnel-sync
+    restart: unless-stopped
     environment:
       - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}
-      - DOMAIN_NAME=${DOMAIN_NAME}
-      - CLOUDFLARE_TUNNEL_NAME=${CLOUDFLARE_TUNNEL_NAME:-cf-docker-tunnel-sync}
-      - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-}
-      - CLOUDFLARED_CONTAINER_NAME=${CLOUDFLARED_CONTAINER_NAME:-}
-      - DASHBOARD_AUTH_ENABLED=${DASHBOARD_AUTH_ENABLED:-true}
-      - DASHBOARD_USERNAME=${DASHBOARD_USERNAME:-${BASIC_AUTH_USERNAME:-}}
-      - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-${BASIC_AUTH_PASSWORD:-}}
-      - SYNC_FALLBACK_INTERVAL=${SYNC_FALLBACK_INTERVAL:-900}
+      - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID}
+      - CLOUDFLARE_TUNNEL_NAME=production-gateway
+      - DOMAIN_NAME=example.com
+      - LOG_LEVEL=INFO
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - cf_token_data:/etc/cloudflared
-    ports:
-      - "${DASHBOARD_BIND_ADDRESS:-0.0.0.0}:${DASHBOARD_PORT:-8080}:8090"
     networks:
       - cf-tunnel-net
-    healthcheck:
-      test: ["CMD", "python", "healthcheck.py"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 5s
 
 networks:
   cf-tunnel-net:
-    name: ${CF_NETWORK_NAME:-cf-tunnel-net}
+    name: cf-tunnel-net
     driver: bridge
-
-volumes:
-  cf_token_data:
 ```
 
-Start the central gateway:
+Start the gateway:
 ```bash
 docker compose up -d
 ```
 
-### 3. Architecture & Operating Modes (Headless vs. Companion Dashboard)
-
-`cf-docker-tunnel-sync` is built on a modular, simplicity-first architecture:
-
-1. **Headless Core Daemon (`hapheus/cf-tunnel-sync`) — Recommended**:
-   - The primary engine.
-   - Listens to Docker socket container lifecycle events.
-   - Safely reconciles ingress rules and DNS CNAME records against the Cloudflare API.
-   - Runs with **zero published host ports** by default.
-2. **Web Dashboard Monitoring (100% Optional)**:
-   - **Companion Container (`hapheus/cf-tunnel-dashboard`)**: Dedicated, lightweight web UI powered by Nginx. Provides live visual diagnostics, responsive mobile layout, and optional HTTP Basic Authentication (`DASHBOARD_AUTH_ENABLED=true`).
-   - **Direct Port Mapping**: Map `${DASHBOARD_PORT:-8080}:8090` on `cf-tunnel-sync` to access the built-in FastAPI dashboard.
-   - **Headless Mode**: Simply remove or comment out the `ports:` mapping. Syncing, safety guardrails, and self-healing operate 100% autonomously in the background.
-
-| Mode | Services Used | Published Host Ports | Ideal For |
-| :--- | :--- | :--- | :--- |
-| **Headless (Default)** | `cloudflared` + `cf-tunnel-sync` | None | Minimalist homelabs, low-resource VPS, secure set-and-forget daemons |
-| **With Companion Dashboard** | `cloudflared` + `cf-tunnel-sync` + `cf-tunnel-dashboard` | `8090:80` | Clean decoupled frontend, visual monitoring, multi-service inspection |
-| **With Embedded Dashboard** | `cloudflared` + `cf-tunnel-sync` (port mapped) | `8080:8090` | Single-container all-in-one setup with direct web UI access |
-
-#### Fail-Closed Authentication Details
-- **Fail-Closed Security:** When the web dashboard is exposed, Basic Authentication is enabled by default (`DASHBOARD_AUTH_ENABLED=true`). If credentials are empty or not configured, access returns HTTP `401 Unauthorized` to safeguard against accidental unauthenticated exposure.
-- **Headless Operation:** If you run headless without host port mappings, authentication settings can remain disabled as the internal endpoints are unreachable from outside the Docker bridge network.
-
-<details>
-<summary><b>Optional Companion Service Compose Definition</b></summary>
-
-To deploy the companion Nginx web UI alongside `cf-tunnel-sync`, add:
-
-```yaml
-  cf-tunnel-dashboard:
-    image: hapheus/cf-tunnel-dashboard:latest
-    restart: always
-    environment:
-      - BASIC_AUTH_USERNAME=${DASHBOARD_USERNAME:-admin}
-      - BASIC_AUTH_PASSWORD=${DASHBOARD_PASSWORD:-changeme}
-      - SYNC_BACKEND_HOST=cf-tunnel-sync
-      - SYNC_BACKEND_PORT=8090
-    ports:
-      - "${DASHBOARD_PORT:-8080}:80"
-    networks:
-      - cf-tunnel-net
-```
-</details>
-
 ---
 
-## 🐳 Step 3: Exposing Other Containers (Multi-Compose Setup)
+### Step 3: Add 1 Network & 2 Labels to your Existing Service
 
-`cf-docker-tunnel-sync` acts as a **central gateway** for your entire Docker host (like Traefik or Nginx Proxy Manager). You do **not** run a separate `cf-docker-tunnel-sync` inside every project.
+Connect your existing container to `cf-tunnel-net` and declare the desired hostname and internal listening port.
 
-Keep your application in its own `docker-compose.yml` and attach it to the shared `cf-tunnel-net` network:
+#### Literal Before & After Compose Diff
 
-```yaml
-services:
-  whoami:
-    image: traefik/whoami
-    restart: always
-    labels:
-      - "cf.tunnel.hostname=whoami.yourdomain.com"
-      - "cf.tunnel.port=80"
-    networks:
-      - cf-tunnel-net
+```diff
+ services:
+   whoami:
+     image: traefik/whoami:latest
+-    ports:
+-      - "8080:80"
++    networks:
++      - default
++      - cf-tunnel-net
++    labels:
++      - "cf.tunnel.hostname=whoami.example.com"
++      - "cf.tunnel.port=80"
 
-networks:
-  cf-tunnel-net:
-    external: true
++networks:
++  cf-tunnel-net:
++    external: true
 ```
 
----
+> ⚠️ **Container Port vs. Host Port:**  
+> `cf.tunnel.port` specifies the internal port your container listens on inside the container network (`80` in whoami's case). You no longer need to expose or publish host ports (`ports: "8080:80"`).
 
-## 🏷️ Container Labels Reference
-
-| Label | Description | Default / Example | Required |
-|---|---|---|---|
-| `cf.tunnel.hostname` | Public FQDN to expose through Cloudflare. | `app.example.com` | **Yes** |
-| `cf.tunnel.port` | Internal container port to route traffic to. | See Port Discovery below | No |
-| `cf.tunnel.service` | Explicit URL override (e.g. `tcp://host:22`, `http://custom:8080`). | Generated from protocol + host + port | No |
-| `cf.tunnel.protocol` | Origin scheme: `http` or `https`. | `http` | No |
-| `cf.tunnel.tls.verify` | Set to `false` to disable TLS certificate verification for self-signed origins. | `true` | No |
-| `cf.tunnel.origin_server_name` | Hostname to validate in origin certificate (SNI override). | Hostname | No |
-| `cf.tunnel.path` | Match incoming requests on a specific URL path prefix. | - | No |
-| `cf.tunnel.tunnel_name` | Target a specific Cloudflare Tunnel for multi-tunnel hosts. | Value of `CLOUDFLARE_TUNNEL_NAME` | No |
-| `cf.tunnel.account_id` | Target a specific Cloudflare Account ID for multi-account hosts. | Value of `CLOUDFLARE_ACCOUNT_ID` | No |
-| `cf.tunnel.enabled` | Explicitly enable (`true`) or disable (`false`) syncing for this container. | `true` (if hostname present) | No |
-| `cf.tunnel.access.policy` | Exposure tier policy tag (`public`, `protected`, `internal`, `unspecified`). | `unspecified` | No |
-
-### 🔍 Port Discovery Hierarchy
-When `cf.tunnel.port` is not explicitly set, `cf-docker-tunnel-sync` determines the target origin port using the following precedence:
-1. **Explicit Service URL:** If `cf.tunnel.service` is defined (e.g., `http://my-service:8080`), it takes top precedence.
-2. **Explicit Port Label:** If `cf.tunnel.port` is provided (e.g., `8080`), it routes to that container port.
-3. **Container Inspection:** Discovers the first exposed private port defined in container metadata (`ports[0]["PrivatePort"]` from Dockerfile `EXPOSE` or compose `expose`/`ports`).
-4. **Protocol Default:** Falls back to port `443` if `cf.tunnel.protocol=https`, otherwise port `80`.
-
----
-
-## 🔄 Synchronization & Lifecycle Semantics
-
-### Event-Driven Debounce Engine
-`cf-docker-tunnel-sync` maintains an open stream to `/events` on the Docker daemon socket:
-- **Instantaneous Sync:** When containers start, stop, die, or restart, sync is triggered within milliseconds.
-- **Coalescing Debouncer:** Multiple rapid Docker events (such as `docker compose up -d` starting 5 services) are collected over `SYNC_DEBOUNCE_SECONDS` (default `2.5s`) into a single batch sync, preventing Cloudflare API quota exhaustion.
-- **Starvation Protection:** Under continuous event churn, `SYNC_DEBOUNCE_MAX_DELAY` (default `10.0s`) enforces an upper bound before a sync run is executed.
-- **Fallback Heartbeat:** A periodic sync runs every `SYNC_FALLBACK_INTERVAL` (default `900s` / 15 minutes) to reconcile external Cloudflare dashboard changes or recover from missed socket events.
-
-### DNS Grace Period & Tombstoning
-To avoid DNS flapping, slow propagation, and API rate limits during brief container restarts or image upgrades:
-- **Immediate Ingress Rule Updates:** When a container stops, it is immediately pruned from Cloudflare Tunnel ingress routing so traffic fails closed safely.
-- **DNS CNAME Tombstoning:** The Cloudflare DNS CNAME record is retained in a tombstone state for `DNS_CLEANUP_GRACE_PERIOD` (default `300s` / 5 minutes). If the container recovers within this window, the tombstone is cleared without touching the Cloudflare DNS API.
-- **Immediate Deletion:** Set `DNS_IMMEDIATE_CLEANUP=true` if your workflow requires immediate DNS record deletion upon container stop.
-
----
-
-## ⚙️ Configuration Variables
-
-### Runtime Environment Variables (`cf-tunnel-sync`)
-
-| Variable | Description | Default | Required |
-|---|---|---|---|
-| `DOMAIN_NAME` | Root domain managed on Cloudflare (e.g., `example.com`). Used for automated domain scoping. | - | **Yes** |
-| `CLOUDFLARE_API_TOKEN` | API Token created in Step 1. | - | **Yes** |
-| `CLOUDFLARE_TUNNEL_NAME` | Name of the Cloudflare Tunnel. | `cf-docker-tunnel-sync` | No |
-| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare Account ID (auto-discovered from zone if omitted). | Auto-discovered | No |
-| `CLOUDFLARED_CONTAINER_NAME` | Name of the companion `cloudflared` container (auto-discovered if omitted). | Auto-discovered | No |
-| `DASHBOARD_AUTH_ENABLED` | Enable HTTP Basic Authentication for the embedded dashboard (`true`/`false`). | `true` | No |
-| `DASHBOARD_USERNAME` | Basic Auth username. *(Alias: `BASIC_AUTH_USERNAME`)* | - | If auth enabled |
-| `DASHBOARD_PASSWORD` | Basic Auth password. *(Alias: `BASIC_AUTH_PASSWORD`)* | - | If auth enabled |
-| `SYNC_DEBOUNCE_SECONDS` | Debounce window in seconds to coalesce rapid Docker events. *(Alias: `SYNC_DEBOUNCE_DELAY`)* | `2.5` | No |
-| `SYNC_DEBOUNCE_MAX_DELAY` | Maximum delay in seconds before forcing a sync during continuous container churn. | `10.0` | No |
-| `SYNC_FALLBACK_INTERVAL` | Periodic fallback sync in seconds to heal external drift. *(Aliases: `SYNC_INTERVAL`, `POLL_INTERVAL`)* | `900` (15m) | No |
-| `DNS_CLEANUP_GRACE_PERIOD` | Grace period in seconds to retain DNS records for stopped containers against flapping. | `300` (5m) | No |
-| `DNS_IMMEDIATE_CLEANUP` | When set to `true`, deletes DNS records immediately without waiting for grace period. | `false` | No |
-| `REQUIRE_SHARED_NETWORK` | When set to `true`, excludes containers that do not share a network with `cloudflared`. | `false` | No |
-| `DOCKER_SOCKET` | Path to the Docker daemon socket. *(Alias: `DOCKER_SOCKET_PATH`)* | `/var/run/docker.sock` | No |
-| `DOCKER_TIMEOUT` | Timeout in seconds for Docker socket API requests. | `10.0` | No |
-| `DOCKER_RETRIES` | Number of retry attempts on Docker socket read errors. | `3` | No |
-| `LOG_LEVEL` | Application logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`). | `INFO` | No |
-
-### Docker Compose Interpolation Variables (`.env`)
-
-| Variable | Description | Default |
-|---|---|---|
-| `DASHBOARD_PORT` | Host port mapped to embedded dashboard internal port 8090. | `8080` |
-| `DASHBOARD_BIND_ADDRESS` | Host IP interface to bind dashboard port (`0.0.0.0` for all, `127.0.0.1` for local-only). | `0.0.0.0` |
-| `CF_NETWORK_NAME` | Bridge network name shared between `cloudflared` and your services. | `cf-tunnel-net` |
-| `CLOUDFLARED_PROTOCOL` | `cloudflared` transport protocol (`auto`, `http2`, `quic`). | `auto` |
-| `DRY_RUN` | Calculate and log planned sync changes without applying mutations to Cloudflare. | `false` | No |
-| `PREFLIGHT_ONLY` | Run read-only preflight readiness validation and exit immediately without mutations. | `false` | No |
-| `MAX_DELETIONS_PER_SYNC` | Maximum route deletions permitted per sync cycle before safety guard aborts. | `3` | No |
-| `ALLOW_MASS_DELETIONS` | Explicit override to bypass the blast-radius deletion budget guard. | `false` | No |
-| `LOG_FORMAT` | Log format: `text` (human-readable) or `json` (single-line JSON for Loki/Datadog). | `text` | No |
-| `CLOUDFLARE_MAX_RETRIES` | Maximum retry attempts for transient Cloudflare API errors (429, 5xx). | `3` | No |
-| `NOTIFICATION_WEBHOOK_URL` | Webhook URL for alert notifications on sync failures or safety trips. | - | No |
-| `NOTIFICATION_WEBHOOK_TYPE` | Webhook format: `auto` (auto-detects Discord/Slack), `slack`, `discord`, or `generic`. | `auto` | No |
-| `NOTIFICATION_COOLDOWN_SECONDS` | Cooldown period to suppress duplicate webhook alerts. | `300` | No |
-
----
-
-## 🛠️ Troubleshooting & Common Pitfalls
-
-### 1. Docker Socket Permission Denied
-**Symptom:** Logs show `PermissionError: [Errno 13] Permission denied: '/var/run/docker.sock'`.  
-**Cause:** The user running inside the container does not have permission to read the host Docker socket.  
-**Resolution:** Ensure `/var/run/docker.sock:/var/run/docker.sock:ro` is mounted in your compose file. On systems with custom Docker socket ACLs or rootless Docker, ensure the Docker socket has read access or pass `user: "${DOCKER_UID}:${DOCKER_GID}"`.
-
-### 2. 502 Bad Gateway / Cloudflare Edge Error
-**Symptom:** Browser returns HTTP 502 Bad Gateway when navigating to your public hostname.  
-**Cause:** The application container is running, but `cloudflared` cannot reach it across Docker networks.  
-**Resolution:** Verify your application container is attached to the shared bridge network (`cf-tunnel-net`). You can test network connectivity directly from `cloudflared`:
+Restart your application service:
 ```bash
-docker exec -it <cloudflared_container_id> ping <app_container_name>
+docker compose up -d
 ```
 
-### 3. Cloudflare API Token Permissions
-**Symptom:** Logs show `403 Forbidden` or `Authentication error` when calling Cloudflare APIs.  
-**Cause:** The API token is missing required scopes.  
-**Resolution:** Ensure your token includes:
-- `Zone -> DNS -> Edit`
-- `Zone -> Zone -> Read`
-- `Account -> Cloudflare Tunnel -> Edit`
+`cf-tunnel-sync` instantly detects the new container, registers the ingress rule with Cloudflare Tunnel, and provisions the `whoami.example.com` DNS CNAME record!
 
-### 4. Dashboard Returns HTTP 401 Unauthorized
-**Symptom:** Visiting `http://<host-ip>:8080` prompts for credentials and rejects login.  
-**Cause:** `DASHBOARD_AUTH_ENABLED=true` is set, but `DASHBOARD_USERNAME` or `DASHBOARD_PASSWORD` are blank or invalid. The service enforces a **fail-closed** policy to prevent unauthorized access.  
-**Resolution:** Set valid `DASHBOARD_USERNAME` and `DASHBOARD_PASSWORD` values in your `.env` file and recreate the container:
+---
+
+## ⏱️ 2-Minute Verification Path
+
+Verify your deployment with this single verification sequence:
+
+### 1. Check Container Health
 ```bash
-docker compose up -d --force-recreate cf-tunnel-sync
+docker compose ps
+```
+*Expected: Both `cloudflared` and `cf-tunnel-sync` report status `Up`.*
+
+### 2. Inspect Sync Logs
+```bash
+docker compose logs -f cf-tunnel-sync
+```
+*Expected output:*
+```text
+INFO: ✅ [PREFLIGHT PASS] Cloudflare API Token authenticated successfully
+INFO: ✅ Cloudflare Tunnel 'production-gateway' ready
+INFO: 🚀 Discovered container whoami (whoami.example.com -> http://whoami:80)
+INFO: ✅ Cloudflare Tunnel ingress configuration updated
+INFO: ✅ Cloudflare DNS CNAME created: whoami.example.com -> <tunnel-id>.cfargotunnel.com
 ```
 
-### 5. Cloudflare Tunnel Protocol / QUIC Blocked
-**Symptom:** `cloudflared` logs show continuous reconnect attempts or UDP connection timeouts.  
-**Cause:** Some ISPs, cloud providers, or firewalls block outbound UDP port 7844 (QUIC).  
-**Resolution:** Force `cloudflared` to use HTTP/2 over standard HTTPS (TCP 443) by setting:
+### 3. Test Public Connectivity
+```bash
+curl -Iv https://whoami.example.com
+```
+*Expected:*
+```text
+HTTP/2 200
+server: cloudflare
+cf-ray: ...
+```
+
+### Troubleshooting Quick Guide
+
+| Symptom | Root Cause | Fix |
+| :--- | :--- | :--- |
+| `curl: (6) Could not resolve host` (`NXDOMAIN`) | DNS record not yet created or propagation delay. | Check `docker compose logs cf-tunnel-sync`. Ensure API token has `Zone:DNS:Edit` permission. |
+| `HTTP 502 Bad Gateway` | `cloudflared` cannot reach container IP/port. | Verify target container is on `cf-tunnel-net`. Verify `cf.tunnel.port` matches the internal application port. |
+| `HTTP 525 / SSL Handshake Failed` | Upstream service uses HTTPS with self-signed certificate. | Add label `cf.tunnel.origin_request.no_tls_verify=true` to your container. |
+| Logs show `SAFETY_GUARD_TRIPPED` | More than 3 services stopped simultaneously. | Protective circuit breaker tripped. Set `ALLOW_MASS_DELETIONS=true` if teardown was intentional. |
+
+---
+
+## 🔄 Startup & Tunnel Lifecycle Truth
+
+`cf-docker-tunnel-sync` operates in two distinct execution modes:
+
+### 1. Non-Mutating Preflight Mode (`PREFLIGHT_ONLY=true` or `--preflight`)
+- Performs **read-only** verification of Docker socket connectivity, Cloudflare API credentials, and token permissions.
+- Inspects whether the specified tunnel exists in your account.
+- **Guaranteed non-destructive:** Never creates or deletes tunnels, DNS records, or ingress rules. Exits immediately with code `0` on success or code `1` with actionable remediation guidance.
+
+### 2. Standard Continuous Sync Mode (Default)
+- **Automatic Tunnel Creation:** If `CLOUDFLARE_TUNNEL_NAME` is configured and the tunnel does not yet exist in your Cloudflare account, `cf-tunnel-sync` automatically creates it on first startup.
+- **Existing Tunnel Re-use:** If `CLOUDFLARE_TUNNEL_ID` is provided (or if a tunnel matching `CLOUDFLARE_TUNNEL_NAME` already exists), it connects and synchronizes against the existing tunnel.
+- **Event-Driven Synchronization:** Listens to the Docker event stream in real-time with an intelligent 2-second debounce filter, ensuring rapid updates during container restarts without hammering the Cloudflare API.
+- **Fallback Polling:** Continuously reconciles state every 30 seconds (`SYNC_INTERVAL=30`) to recover from network disconnects or out-of-band changes.
+
+---
+
+## 🖥️ Built-in Web Dashboard (Optional)
+
+`cf-tunnel-sync` includes a lightweight, real-time web dashboard for inspecting active routes, Docker container health, and live sync logs.
+
+| Desktop Overview | Mobile Overview |
+| :---: | :---: |
+| ![Web Dashboard Preview](docs/screenshots/dashboard-preview.png) | ![Mobile View](docs/screenshots/dashboard-mobile.png) |
+
+To enable HTTP Basic Authentication for the dashboard, add to your gateway environment:
 ```env
-CLOUDFLARED_PROTOCOL=http2
+DASHBOARD_AUTH_ENABLED=true
+DASHBOARD_USERNAME=admin
+DASHBOARD_PASSWORD=your-secure-password
 ```
 
 ---
 
-## 🌐 Multi-Account & Multi-Domain Setups
+## 📚 Detailed Reference Documentation
 
-`cf-docker-tunnel-sync` supports running multiple tunnel stacks side-by-side cleanly:
-
-1. **Automated Domain Scoping:**  
-   Each `cf-tunnel-sync` instance automatically filters discovered containers against its configured `DOMAIN_NAME`.
-2. **Dedicated Tunnel Scoping:**  
-   Use `cf.tunnel.tunnel_name` and `cf.tunnel.account_id` labels to direct specific containers to designated tunnels.
-3. **Segregated Gateway Networks:**  
-   Set different `CF_NETWORK_NAME` values (e.g. `cf-tunnel-prod` and `cf-tunnel-dev`) to keep network traffic completely isolated.
+- ⚙️ **[Configuration Reference](docs/configuration.md)** — Exhaustive list of all environment variables, flags, and circuit breakers.
+- 🏷️ **[Docker Labels Reference](docs/labels.md)** — Comprehensive container label guide (HTTP/HTTPS, SNI, multi-domain routing, TLS settings).
+- 🏆 **[Flagship Multi-Compose Walkthrough](examples/02-multi-compose/README.md)** — Production-grade multi-stack guide with zero host-port exposure.
+- 📖 **[10-Minute Canonical Quickstart](QUICKSTART.md)** — Rapid standalone walkthrough.
+- 📋 **[Compatibility Baseline](docs/COMPATIBILITY.md)** — Verified Docker Compose versions and system matrix.
 
 ---
 
-## 🔌 Exposing Non-Docker Host Services
+## 🤝 Contributing
 
-To route public traffic to a service running directly on the host (e.g., Mac or Raspberry Pi host service outside Docker):
-
-1. Ensure `extra_hosts: ["host.docker.internal:host-gateway"]` is present in your `cloudflared` service.
-2. Label any dummy or companion container with:
-   ```yaml
-   labels:
-     - "cf.tunnel.hostname=service.yourdomain.com"
-     - "cf.tunnel.service=http://host.docker.internal:8000"
-   ```
+We welcome contributions! Please review [CONTRIBUTING.md](CONTRIBUTING.md) for code style, hermetic testing standards, and our pull request checklist.
 
 ---
 
-## 💝 Support the Project
+## 📄 License
 
-If `cf-docker-tunnel-sync` saves you time and makes your self-hosting smoother, consider supporting:
+This project is licensed under the [MIT License](LICENSE).
+
+---
+
+## 💖 Support the Project
+
+If `cf-docker-tunnel-sync` helps power your home server or production infrastructure, consider supporting:
 
 - ☕ **Buy me a coffee:** Send a tip via [PayPal](http://paypal.me/hapheus).
-- 🎗️ **Charity Donation:** Donate to [Österreichische Krebshilfe (Austrian Cancer Aid)](https://www.krebshilfe.net/) or any local animal welfare organization.
-- 🎯 **Dream Support:** I would love tickets for the World Darts Championship at **Ally Pally** (Alexandra Palace) 😅 – hopefully, I will make it there one day!
+- 🎗️ **Charity Donation:** Donate to [Österreichische Krebshilfe (Austrian Cancer Aid)](https://www.krebshilfe.net/) or your local animal welfare organization.
+- 🎯 **Dream Support:** Help send me to the World Darts Championship at **Ally Pally** (Alexandra Palace) 😅!
