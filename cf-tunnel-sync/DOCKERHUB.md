@@ -88,7 +88,7 @@ Enable any container for automatic synchronization by applying Docker labels:
 
 | Variable | Required | Default | Description |
 |---|:---:|---|---|
-| `CLOUDFLARE_API_TOKEN` | Yes | *none* | Cloudflare API Token with `Zone:DNS:Edit` and `Account:Cloudflare Tunnel:Edit` permissions. |
+| `CLOUDFLARE_API_TOKEN` | Yes | *none* | Cloudflare API Token with `Account:Cloudflare Tunnel:Edit`, `Zone:DNS:Edit`, and `Zone:Zone:Read` permissions. |
 | `CLOUDFLARE_ACCOUNT_ID` | Yes | *none* | Cloudflare Account ID. |
 | `CLOUDFLARE_TUNNEL_NAME` | Yes* | *none* | Name of the Cloudflare Zero Trust Tunnel (*or specify `CLOUDFLARE_TUNNEL_ID`). |
 | `CLOUDFLARE_TUNNEL_ID` | No | *auto-detected* | Explicit Cloudflare Tunnel UUID. |
