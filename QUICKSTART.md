@@ -2,6 +2,11 @@
 
 Get your self-hosted Docker services securely exposed through Cloudflare Tunnels in under 10 minutes with automated ingress routing, automated DNS CNAME synchronization, and zero open inbound ports on your firewall.
 
+> 💡 **Simplicity First — Headless by Design**:  
+> `cf-tunnel-sync` is primarily an autonomous, set-and-forget background daemon. It runs silently in the background, continuously syncing Docker labels to Cloudflare Tunnels without requiring any exposed ports or web UI.  
+> 
+> Visual status monitoring is **100% optional** and can be added at any time via the companion container `hapheus/cf-tunnel-dashboard` or by exposing the internal status port.
+
 ---
 
 ## ⚡ Prerequisites
@@ -39,7 +44,11 @@ CLOUDFLARE_TUNNEL_NAME=my-homelab-tunnel
 EOF
 ```
 
-Create `docker-compose.yml`:
+You can run `cf-tunnel-sync` in two ways:
+- **Mode A: Minimalist Headless (Recommended)** — Zero published host ports; operates purely in the background.
+- **Mode B: With Companion Dashboard** — Adds visual status inspection and preflight diagnostics.
+
+### Mode A: Minimalist Headless Stack (Recommended `docker-compose.yml`)
 
 ```yaml
 services:
@@ -73,10 +82,8 @@ services:
       - cf_token_data:/etc/cloudflared
     networks:
       - cf-tunnel-net
-    ports:
-      - "8090:8090"
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8090/health"]
+      test: ["CMD", "python", "healthcheck.py"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -90,6 +97,8 @@ networks:
 volumes:
   cf_token_data:
 ```
+
+*(Optional: To enable the visual Web UI, see Step 5 below to add the companion `hapheus/cf-tunnel-dashboard` container or map port `8090`).*
 
 ---
 
@@ -149,9 +158,41 @@ docker compose up -d
 
 ---
 
-## Step 5: Truthful Diagnostics & Visual Status (R02)
+## Step 5: Truthful Diagnostics & Optional Companion Dashboard (R02)
 
-Open `http://localhost:8090` in your browser.
+By default in headless mode, `cf-tunnel-sync` outputs all diagnostic, preflight, and synchronization logs directly to stdout:
+
+```bash
+docker compose logs -f cf-tunnel-sync
+```
+
+### Optional: Enabling the Web Dashboard UI
+
+If you prefer a visual web interface to monitor sync state and inspect the 6-stage diagnostic pipeline, you have two simple options:
+
+#### Option 1: Companion Container (Recommended UI — `hapheus/cf-tunnel-dashboard`)
+Add the companion service `cf-tunnel-dashboard` to your `docker-compose.yml`:
+```yaml
+  cf-tunnel-dashboard:
+    image: hapheus/cf-tunnel-dashboard:latest
+    container_name: cf-tunnel-dashboard
+    restart: always
+    ports:
+      - "8090:80"
+    environment:
+      - DASHBOARD_AUTH_ENABLED=false # Set to true to require basic auth
+    networks:
+      - cf-tunnel-net
+```
+
+#### Option 2: Direct Port Mapping
+Alternatively, publish port `8090:8090` directly on the `cf-tunnel-sync` service in `docker-compose.yml`:
+```yaml
+    ports:
+      - "8090:8090"
+```
+
+Once deployed, open `http://localhost:8090` in your browser.
 
 The web dashboard and the `GET /api/status` endpoint evaluate a **6-stage diagnostic pipeline** for each service:
 1. `LABEL_SYNTAX`: Validates RFC 1123 hostname and port formatting.
@@ -177,6 +218,10 @@ docker compose run --rm -e DRY_RUN=true cf-tunnel-sync python app.py --dry-run
 Or query the ChangePlan API endpoint:
 
 ```bash
+# If running headless (inside the container):
+docker compose exec cf-tunnel-sync curl -s http://localhost:8090/api/change-plan | jq .
+
+# Or if port 8090 is mapped on the host:
 curl -s http://localhost:8090/api/change-plan | jq .
 ```
 

@@ -42,7 +42,7 @@ services:
       retries: 3
       start_period: 5s
 
-  # Optional separate Nginx dashboard proxy (uncomment if legacy dual-container setup is desired)
+  # Optional companion Nginx dashboard UI (uncomment if companion frontend container is desired)
   # cf-tunnel-dashboard:
   #   image: hapheus/cf-tunnel-dashboard:latest
   #   build:

@@ -50,7 +50,8 @@ Automatically sync Docker containers with Cloudflare Tunnels (Zero Trust). Just 
 |:---:|:---:|:---:|
 | ![Web Dashboard Preview](docs/screenshots/dashboard-preview.png) | ![Dark Mode](docs/screenshots/dashboard-dark.png) | ![Mobile View](docs/screenshots/dashboard-mobile.png) |
 
-> 💡 **Quickstart:** Looking for a fast walkthrough under 10 minutes? Check out the [10-Minute Canonical Quickstart Guide](QUICKSTART.md).
+> 💡 **Quickstart:** Looking for a fast walkthrough under 10 minutes? Check out the [10-Minute Canonical Quickstart Guide](QUICKSTART.md).  
+> ⚡ **Simplicity First — Headless by Design**: `cf-tunnel-sync` runs primarily as an autonomous background daemon with zero open ports. Visual status monitoring is 100% optional via the companion container [`hapheus/cf-tunnel-dashboard`](https://hub.docker.com/r/hapheus/cf-tunnel-dashboard) or direct port mapping.
 
 ---
 
@@ -174,15 +175,34 @@ Start the central gateway:
 docker compose up -d
 ```
 
-### 3. Architecture & Authentication Details
-- **Single-Container Architecture:** `cf-tunnel-sync` runs both the synchronization worker and the FastAPI web dashboard internally on port `8090` (mapped to host port `8080`).
-- **Fail-Closed Authentication:** Basic Authentication is enabled by default (`DASHBOARD_AUTH_ENABLED=true`). If credentials are empty or not configured, access returns HTTP `401 Unauthorized` to safeguard against accidental unauthenticated exposure.
-- **Headless Mode:** If you do not want the dashboard published to your host network, simply remove the `ports:` mapping from the `cf-tunnel-sync` service.
+### 3. Architecture & Operating Modes (Headless vs. Companion Dashboard)
+
+`cf-docker-tunnel-sync` is built on a modular, simplicity-first architecture:
+
+1. **Headless Core Daemon (`hapheus/cf-tunnel-sync`) — Recommended**:
+   - The primary engine.
+   - Listens to Docker socket container lifecycle events.
+   - Safely reconciles ingress rules and DNS CNAME records against the Cloudflare API.
+   - Runs with **zero published host ports** by default.
+2. **Web Dashboard Monitoring (100% Optional)**:
+   - **Companion Container (`hapheus/cf-tunnel-dashboard`)**: Dedicated, lightweight web UI powered by Nginx. Provides live visual diagnostics, dark/light theme, mobile layout, and optional HTTP Basic Authentication (`DASHBOARD_AUTH_ENABLED=true`).
+   - **Direct Port Mapping**: Map `${DASHBOARD_PORT:-8080}:8090` on `cf-tunnel-sync` to access the built-in FastAPI dashboard.
+   - **Headless Mode**: Simply remove or comment out the `ports:` mapping. Syncing, safety guardrails, and self-healing operate 100% autonomously in the background.
+
+| Mode | Services Used | Published Host Ports | Ideal For |
+| :--- | :--- | :--- | :--- |
+| **Headless (Default)** | `cloudflared` + `cf-tunnel-sync` | None | Minimalist homelabs, low-resource VPS, secure set-and-forget daemons |
+| **With Companion Dashboard** | `cloudflared` + `cf-tunnel-sync` + `cf-tunnel-dashboard` | `8090:80` | Clean decoupled frontend, visual monitoring, multi-service inspection |
+| **With Embedded Dashboard** | `cloudflared` + `cf-tunnel-sync` (port mapped) | `8080:8090` | Single-container all-in-one setup with direct web UI access |
+
+#### Fail-Closed Authentication Details
+- **Fail-Closed Security:** When the web dashboard is exposed, Basic Authentication is enabled by default (`DASHBOARD_AUTH_ENABLED=true`). If credentials are empty or not configured, access returns HTTP `401 Unauthorized` to safeguard against accidental unauthenticated exposure.
+- **Headless Operation:** If you run headless without host port mappings, authentication settings can remain disabled as the internal endpoints are unreachable from outside the Docker bridge network.
 
 <details>
-<summary><b>Optional: Legacy Standalone Nginx Dashboard Proxy</b></summary>
+<summary><b>Optional Companion Service Compose Definition</b></summary>
 
-For legacy multi-container setups preferring a separate Nginx frontend proxy, you can unpublish port `8090` from `cf-tunnel-sync` and attach the companion `hapheus/cf-tunnel-dashboard` container:
+To deploy the companion Nginx web UI alongside `cf-tunnel-sync`, add:
 
 ```yaml
   cf-tunnel-dashboard:

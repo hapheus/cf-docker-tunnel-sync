@@ -38,6 +38,7 @@ This example demonstrates the simplest possible deployment: running `cloudflared
 ```
 
 - **Single Container Engine & UI:** `cf-tunnel-sync` runs both the event-driven synchronization engine and the FastAPI web dashboard internally on port `8090` (mapped to host port `8080`). No external Nginx container is required.
+- **Headless Mode Supported:** If you prefer pure background daemon execution with zero open host ports, simply comment out the `ports:` definition in `docker-compose.yml`. Synchronization, DNS management, and self-healing remain 100% active.
 - **Fail-Closed Security:** Dashboard authentication is enabled by default (`DASHBOARD_AUTH_ENABLED=true`). If credentials are empty or unconfigured, access returns HTTP `401 Unauthorized`.
 - **Automatic Cleanup:** When containers stop, Cloudflare Tunnel ingress rules are updated immediately, while DNS CNAME records are gracefully tombstoned for 300 seconds to eliminate DNS flapping during restarts.
 - **Startup Ordering & Dependency Gating:** `cloudflared` specifies `depends_on: { cf-tunnel-sync: { condition: service_healthy } }` so it starts only after the tunnel credentials have been created by `cf-tunnel-sync`, avoiding token-missing restart loops.

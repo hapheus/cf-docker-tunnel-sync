@@ -29,6 +29,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - cf_token_data:/etc/cloudflared
+    # Optional dashboard port: comment out for pure headless operation (zero open host ports)
     ports:
       - "${DASHBOARD_BIND_ADDRESS:-127.0.0.1}:${DASHBOARD_PORT:-8080}:8090"
     networks:
