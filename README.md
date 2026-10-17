@@ -300,6 +300,10 @@ To avoid DNS flapping, slow propagation, and API rate limits during brief contai
 | `DASHBOARD_BIND_ADDRESS` | Host IP interface to bind dashboard port (`0.0.0.0` for all, `127.0.0.1` for local-only). | `0.0.0.0` |
 | `CF_NETWORK_NAME` | Bridge network name shared between `cloudflared` and your services. | `cf-tunnel-net` |
 | `CLOUDFLARED_PROTOCOL` | `cloudflared` transport protocol (`auto`, `http2`, `quic`). | `auto` |
+| `DRY_RUN` | Calculate and log planned sync changes without applying mutations to Cloudflare. | `false` | No |
+| `PREFLIGHT_ONLY` | Run read-only preflight readiness validation and exit immediately without mutations. | `false` | No |
+| `MAX_DELETIONS_PER_SYNC` | Maximum route deletions permitted per sync cycle before safety guard aborts. | `3` | No |
+| `ALLOW_MASS_DELETIONS` | Explicit override to bypass the blast-radius deletion budget guard. | `false` | No |
 
 ---
 
