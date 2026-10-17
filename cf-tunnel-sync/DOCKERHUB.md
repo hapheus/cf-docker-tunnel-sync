@@ -98,6 +98,11 @@ Enable any container for automatic synchronization by applying Docker labels:
 | `PREFLIGHT_ONLY` | No | `false` | When `true`, executes read-only readiness checks and exits immediately without mutations. |
 | `MAX_DELETIONS_PER_SYNC` | No | `3` | Maximum ingress/DNS route deletions permitted per sync cycle before safety guard aborts. |
 | `ALLOW_MASS_DELETIONS` | No | `false` | Explicit safety override to bypass blast-radius mass-deletion guard. |
+| `LOG_FORMAT` | No | `text` | Log format: `text` or `json` for structured observability. |
+| `CLOUDFLARE_MAX_RETRIES` | No | `3` | Maximum retry attempts for transient Cloudflare API errors (429, 5xx). |
+| `NOTIFICATION_WEBHOOK_URL` | No | *none* | Webhook URL for alerting on sync failures or blast-radius aborts. |
+| `NOTIFICATION_WEBHOOK_TYPE` | No | `auto` | Webhook format (`auto`, `slack`, `discord`, `generic`). |
+| `NOTIFICATION_COOLDOWN_SECONDS` | No | `300` | Cooldown window in seconds suppressing duplicate alerts. |
 | `DOCKER_HOST` | No | `unix:///var/run/docker.sock` | Docker daemon socket URI. |
 | `STATUS_PAGE_ENABLED` | No | `true` | Enable internal API & status endpoint on port `8090`. |
 | `STATUS_PAGE_PORT` | No | `8090` | Internal status API listening port. |

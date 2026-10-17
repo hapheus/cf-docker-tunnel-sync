@@ -23,6 +23,7 @@ class DiscoveredService(BaseModel):
     network_connected: bool = True
     network_warning: Optional[str] = None
     originRequest: Optional[Dict[str, Any]] = None
+    access_policy: str = "unspecified"
 
 
 class ContainerItem(BaseModel):

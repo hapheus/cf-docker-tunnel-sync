@@ -1,20 +1,31 @@
 import asyncio
-import json
 import logging
+import os
 import time
 from typing import Any, Dict, Optional
 
 import httpx
+from metrics import metrics_registry
+from resilience import RetryPolicy
 
 logger = logging.getLogger("cf-tunnel-sync")
 
 
 class CloudflareClient:
-    """Modern asynchronous & synchronous Cloudflare API client backed by HTTPX."""
+    """Modern asynchronous & synchronous Cloudflare API client backed by HTTPX with exponential retry backoff."""
 
     def __init__(self, base_url: str = "https://api.cloudflare.com/client/v4", timeout: float = 15.0):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        try:
+            max_r = int(os.getenv("CLOUDFLARE_MAX_RETRIES", "3"))
+        except (ValueError, TypeError):
+            max_r = 3
+        try:
+            base_d = float(os.getenv("CLOUDFLARE_RETRY_BASE_DELAY", "0.5"))
+        except (ValueError, TypeError):
+            base_d = 0.5
+        self.retry_policy = RetryPolicy(max_retries=max_r, base_delay=base_d)
 
     async def async_request(
         self,
@@ -23,27 +34,34 @@ class CloudflareClient:
         method: str = "GET",
         data: Optional[Dict[str, Any]] = None,
         paginate: bool = True,
-        max_retries: int = 3,
+        max_retries: Optional[int] = None,
         client: Optional[httpx.AsyncClient] = None,
     ) -> Dict[str, Any]:
-        """Asynchronously call Cloudflare API with rate-limiting backoff and auto-pagination."""
+        """Asynchronously call Cloudflare API with rate-limiting backoff, 5xx retries, and auto-pagination."""
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         }
+        retries_limit = max_retries if max_retries is not None else self.retry_policy.max_retries
 
         async def _execute_single(c: httpx.AsyncClient, url: str, payload: Optional[Dict[str, Any]] = None):
-            for attempt in range(1, max_retries + 1):
+            for attempt in range(1, retries_limit + 1):
                 try:
                     resp = await c.request(method, url, json=payload, headers=headers)
-                    if resp.status_code == 429 and attempt < max_retries:
+                    status_bucket = f"{resp.status_code // 100}xx"
+                    metrics_registry.inc_counter(
+                        "cf_tunnel_api_requests_total",
+                        1.0,
+                        {"method": method.upper(), "status": status_bucket},
+                    )
+
+                    if self.retry_policy.is_retryable(resp.status_code) and attempt < retries_limit:
                         retry_after = resp.headers.get("Retry-After")
-                        sleep_time = (
-                            float(retry_after)
-                            if retry_after and retry_after.isdigit()
-                            else (0.2 * (2 ** (attempt - 1)))
+                        sleep_time = self.retry_policy.get_delay(attempt, retry_after)
+                        msg = (
+                            f"Cloudflare API status {resp.status_code} on {url}, "
+                            f"retrying attempt {attempt + 1}/{retries_limit} in {sleep_time:.2f}s"
                         )
-                        msg = f"Cloudflare rate limit (429) on {url}, retrying in {sleep_time:.1f}s"
                         logger.warning(msg)
                         try:
                             import app
@@ -63,14 +81,21 @@ class CloudflareClient:
                                     f"{err.get('message')} (code: {err.get('code')})" for err in errors
                                 )
                                 raise RuntimeError(f"Cloudflare API Error ({resp.status_code}): {err_text}") from None
-                        except (json.JSONDecodeError, AttributeError):
+                        except Exception:
                             pass
                         raise RuntimeError(f"Cloudflare HTTP {resp.status_code}: {resp.text}") from None
 
                     return resp.json()
                 except (httpx.TimeoutException, httpx.NetworkError) as e:
-                    if attempt < max_retries:
-                        await asyncio.sleep(0.2 * (2 ** (attempt - 1)))
+                    if attempt < retries_limit:
+                        sleep_time = self.retry_policy.get_delay(attempt)
+                        logger.warning(
+                            "Cloudflare network exception %s on %s, retrying in %.2fs",
+                            type(e).__name__,
+                            url,
+                            sleep_time,
+                        )
+                        await asyncio.sleep(sleep_time)
                         continue
                     raise RuntimeError(f"Cloudflare Network Error: {e}") from None
 
@@ -113,27 +138,34 @@ class CloudflareClient:
         method: str = "GET",
         data: Optional[Dict[str, Any]] = None,
         paginate: bool = True,
-        max_retries: int = 3,
+        max_retries: Optional[int] = None,
         client: Optional[httpx.Client] = None,
     ) -> Dict[str, Any]:
-        """Synchronously call Cloudflare API with rate-limiting backoff and auto-pagination."""
+        """Synchronously call Cloudflare API with rate-limiting backoff, 5xx retries, and auto-pagination."""
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         }
+        retries_limit = max_retries if max_retries is not None else self.retry_policy.max_retries
 
         def _execute_single(c: httpx.Client, url: str, payload: Optional[Dict[str, Any]] = None):
-            for attempt in range(1, max_retries + 1):
+            for attempt in range(1, retries_limit + 1):
                 try:
                     resp = c.request(method, url, json=payload, headers=headers)
-                    if resp.status_code == 429 and attempt < max_retries:
+                    status_bucket = f"{resp.status_code // 100}xx"
+                    metrics_registry.inc_counter(
+                        "cf_tunnel_api_requests_total",
+                        1.0,
+                        {"method": method.upper(), "status": status_bucket},
+                    )
+
+                    if self.retry_policy.is_retryable(resp.status_code) and attempt < retries_limit:
                         retry_after = resp.headers.get("Retry-After")
-                        sleep_time = (
-                            float(retry_after)
-                            if retry_after and retry_after.isdigit()
-                            else (0.2 * (2 ** (attempt - 1)))
+                        sleep_time = self.retry_policy.get_delay(attempt, retry_after)
+                        msg = (
+                            f"Cloudflare API status {resp.status_code} on {url}, "
+                            f"retrying attempt {attempt + 1}/{retries_limit} in {sleep_time:.2f}s"
                         )
-                        msg = f"Cloudflare rate limit (429) on {url}, retrying in {sleep_time:.1f}s"
                         logger.warning(msg)
                         try:
                             import app
@@ -153,14 +185,21 @@ class CloudflareClient:
                                     f"{err.get('message')} (code: {err.get('code')})" for err in errors
                                 )
                                 raise RuntimeError(f"Cloudflare API Error ({resp.status_code}): {err_text}") from None
-                        except (json.JSONDecodeError, AttributeError):
+                        except Exception:
                             pass
                         raise RuntimeError(f"Cloudflare HTTP {resp.status_code}: {resp.text}") from None
 
                     return resp.json()
                 except (httpx.TimeoutException, httpx.NetworkError) as e:
-                    if attempt < max_retries:
-                        time.sleep(0.2 * (2 ** (attempt - 1)))
+                    if attempt < retries_limit:
+                        sleep_time = self.retry_policy.get_delay(attempt)
+                        logger.warning(
+                            "Cloudflare network exception %s on %s, retrying in %.2fs",
+                            type(e).__name__,
+                            url,
+                            sleep_time,
+                        )
+                        time.sleep(sleep_time)
                         continue
                     raise RuntimeError(f"Cloudflare Network Error: {e}") from None
 
@@ -206,7 +245,7 @@ def cf_api(
     method: str = "GET",
     data: Optional[Dict[str, Any]] = None,
     paginate: bool = True,
-    max_retries: int = 3,
+    max_retries: Optional[int] = 3,
 ) -> Dict[str, Any]:
     """Compatibility helper proxying to default_cf_client.sync_request."""
     return default_cf_client.sync_request(

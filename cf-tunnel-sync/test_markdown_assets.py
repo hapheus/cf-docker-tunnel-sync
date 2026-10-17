@@ -121,6 +121,8 @@ def test_dockerhub_markdown_files_exist_and_consistent():
     assert "PREFLIGHT_ONLY" in sync_content
     assert "MAX_DELETIONS_PER_SYNC" in sync_content
     assert "ALLOW_MASS_DELETIONS" in sync_content
+    assert "NOTIFICATION_WEBHOOK_URL" in sync_content
+    assert "LOG_FORMAT" in sync_content
 
 
 def test_markdown_asset_scanner_detects_broken_link(tmp_path):
