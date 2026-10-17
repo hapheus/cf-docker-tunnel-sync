@@ -63,3 +63,7 @@ uv run ruff format
 
 4. **Zero Internal AI Files:**
    - Never commit or publish AI planning documents, scratchpads, prompt logs, or temporary markdown artifacts into the repository. Only production code, official documentation, and automated tests belong in version control.
+5. **Documentation & Asset Integrity:**
+   - Any images, screenshots, or diagrams referenced in documentation (such as in README.md or examples/) must reside in docs/screenshots/ or docs/assets/ and be committed alongside documentation changes.
+   - Hermetic test suites automatically validate that all relative links, images, and document references exist on disk.
+
