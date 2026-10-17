@@ -92,6 +92,33 @@ def test_all_markdown_relative_assets_exist():
     assert not broken_references, "Found broken relative markdown links/assets:\n" + "\n".join(broken_references)
 
 
+def test_dockerhub_markdown_files_exist_and_consistent():
+    """Verify that Docker Hub documentation files exist, are non-empty, and align with core configuration."""
+    repo_root = get_repo_root()
+    dashboard_hub = repo_root / "cf-tunnel-dashboard" / "DOCKERHUB.md"
+    sync_hub = repo_root / "cf-tunnel-sync" / "DOCKERHUB.md"
+
+    assert dashboard_hub.exists(), "cf-tunnel-dashboard/DOCKERHUB.md missing"
+    assert sync_hub.exists(), "cf-tunnel-sync/DOCKERHUB.md missing"
+
+    dashboard_content = dashboard_hub.read_text(encoding="utf-8")
+    sync_content = sync_hub.read_text(encoding="utf-8")
+
+    assert len(dashboard_content) > 500, "cf-tunnel-dashboard/DOCKERHUB.md content too short"
+    assert len(sync_content) > 500, "cf-tunnel-sync/DOCKERHUB.md content too short"
+
+    # Verify critical configuration terms are present
+    assert "DASHBOARD_AUTH_ENABLED" in dashboard_content
+    assert "BASIC_AUTH_USERNAME" in dashboard_content
+    assert "BASIC_AUTH_PASSWORD" in dashboard_content
+    assert "hapheus/cf-tunnel-dashboard" in dashboard_content
+
+    assert "CLOUDFLARE_API_TOKEN" in sync_content
+    assert "CLOUDFLARE_TUNNEL_NAME" in sync_content
+    assert "cf.tunnel.enable" in sync_content
+    assert "hapheus/cf-tunnel-sync" in sync_content
+
+
 def test_markdown_asset_scanner_detects_broken_link(tmp_path):
     """Hermetic unit test: ensure scanner properly identifies non-existent files."""
     dummy_md = tmp_path / "TEST.md"
