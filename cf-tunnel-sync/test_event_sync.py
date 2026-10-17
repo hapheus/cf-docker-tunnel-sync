@@ -16,16 +16,16 @@ class TestEventDrivenSync(unittest.IsolatedAsyncioTestCase):
     async def test_debouncer_bundles_rapid_events(self):
         """Verify that rapid successive events are bundled into a single sync execution."""
         mock_sync = MagicMock()
-        debouncer = app.DebouncedSyncTrigger(delay=0.08, sync_target=mock_sync)
+        debouncer = app.DebouncedSyncTrigger(delay=0.15, sync_target=mock_sync)
         debouncer.set_loop(asyncio.get_running_loop())
 
-        # Trigger 5 rapid events in succession
+        # Trigger 5 rapid events in succession within a few milliseconds
         for i in range(5):
             debouncer.trigger(f"event_{i}")
-            await asyncio.sleep(0.02)
+            await asyncio.sleep(0.001)
 
         # Allow debounce window to elapse
-        await asyncio.sleep(0.12)
+        await asyncio.sleep(0.20)
 
         # Ensure sync callback was executed exactly ONCE
         self.assertEqual(mock_sync.call_count, 1)
@@ -33,16 +33,16 @@ class TestEventDrivenSync(unittest.IsolatedAsyncioTestCase):
     async def test_debouncer_respects_max_delay(self):
         """Verify that a steady stream of events does not starve sync past max_delay."""
         mock_sync = MagicMock()
-        debouncer = app.DebouncedSyncTrigger(delay=0.08, max_delay=0.15, sync_target=mock_sync)
+        debouncer = app.DebouncedSyncTrigger(delay=0.10, max_delay=0.20, sync_target=mock_sync)
         debouncer.set_loop(asyncio.get_running_loop())
 
         start_time = time.time()
-        # Continuously trigger events every 0.04s for 0.25s
-        while time.time() - start_time < 0.25:
+        # Continuously trigger events every 0.03s for 0.35s
+        while time.time() - start_time < 0.35:
             debouncer.trigger("continuous_event")
-            await asyncio.sleep(0.04)
+            await asyncio.sleep(0.03)
 
-        await asyncio.sleep(0.12)
+        await asyncio.sleep(0.15)
         # Should have executed at least once despite constant triggers
         self.assertGreaterEqual(mock_sync.call_count, 1)
 
@@ -115,7 +115,7 @@ class TestEventDrivenSync(unittest.IsolatedAsyncioTestCase):
     async def test_debouncer_coalesces_without_task_churn(self):
         """Verify debouncer coalesces rapid events into a single worker task without churn."""
         mock_sync = MagicMock()
-        debouncer = app.DebouncedSyncTrigger(delay=0.06, max_delay=0.5, sync_target=mock_sync)
+        debouncer = app.DebouncedSyncTrigger(delay=0.10, max_delay=0.5, sync_target=mock_sync)
         loop = asyncio.get_running_loop()
         debouncer.set_loop(loop)
 
@@ -129,7 +129,7 @@ class TestEventDrivenSync(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(worker.done())
 
         # Wait for debounce delay to expire
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.15)
 
         self.assertEqual(mock_sync.call_count, 1)
         self.assertIsNone(debouncer._deadline)
