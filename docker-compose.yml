@@ -23,9 +23,11 @@ services:
       - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-}
       - CLOUDFLARED_CONTAINER_NAME=${CLOUDFLARED_CONTAINER_NAME:-}
       - DASHBOARD_AUTH_ENABLED=${DASHBOARD_AUTH_ENABLED:-true}
+      - DASHBOARD_USERNAME=${DASHBOARD_USERNAME:-${BASIC_AUTH_USERNAME:-}}
+      - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-${BASIC_AUTH_PASSWORD:-}}
       - BASIC_AUTH_USERNAME=${BASIC_AUTH_USERNAME:-}
       - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-}
-      - POLL_INTERVAL=30
+      - SYNC_FALLBACK_INTERVAL=${SYNC_FALLBACK_INTERVAL:-900}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - cf_token_data:/etc/cloudflared
@@ -34,11 +36,11 @@ services:
     networks:
       - cf-tunnel-net
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8090/health"]
-      interval: 30s
+      test: ["CMD", "python", "healthcheck.py"]
+      interval: 10s
       timeout: 5s
       retries: 3
-      start_period: 10s
+      start_period: 5s
 
   # Optional separate Nginx dashboard proxy (uncomment if legacy dual-container setup is desired)
   # cf-tunnel-dashboard:
@@ -48,18 +50,16 @@ services:
   #     dockerfile: Dockerfile
   #   restart: always
   #   environment:
-  #     - DASHBOARD_AUTH_ENABLED=${DASHBOARD_AUTH_ENABLED:-true}
-  #     - BASIC_AUTH_USERNAME=${BASIC_AUTH_USERNAME}
-  #     - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD}
+  #     - BASIC_AUTH_USERNAME=${BASIC_AUTH_USERNAME:-admin}
+  #     - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-changeme}
+  #     - SYNC_BACKEND_HOST=cf-tunnel-sync
+  #     - SYNC_BACKEND_PORT=8090
   #   ports:
-  #     - "${DASHBOARD_BIND_ADDRESS:-0.0.0.0}:8081:80"
+  #     - "${DASHBOARD_BIND_ADDRESS:-0.0.0.0}:${DASHBOARD_PORT:-8080}:80"
   #   networks:
   #     - cf-tunnel-net
-  #   depends_on:
-  #     cf-tunnel-sync:
-  #       condition: service_healthy
   #   healthcheck:
-  #     test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1/health || exit 1"]
+  #     test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:80/health || exit 1"]
   #     interval: 10s
   #     timeout: 5s
   #     retries: 3
