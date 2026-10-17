@@ -15,6 +15,10 @@ from typing import Any, Callable, Dict, List, Optional, Set
 
 import uvicorn
 from cloudflare import cf_api
+from diagnostics import (
+    compute_truthful_service_status,
+    evaluate_service_stages,
+)
 from fastapi import Depends, FastAPI, HTTPException, Response, status
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -22,6 +26,7 @@ from pydantic import BaseModel
 from reconcile import (
     BlastRadiusExceededError,
     DnsActionType,
+    IngressActionType,
     OwnershipPolicy,
     RemoteState,
     build_discovery_snapshot,
@@ -105,6 +110,10 @@ def get_domain_name() -> str:
     return os.getenv("DOMAIN_NAME", "").strip().rstrip(".").lower()
 
 
+def get_token() -> str:
+    return (os.getenv("CLOUDFLARE_API_TOKEN") or os.getenv("CLOUDFLARE_TOKEN") or "").strip()
+
+
 sync_lock = threading.Lock()
 
 sync_state = {
@@ -113,12 +122,16 @@ sync_state = {
     "tunnel_id": None,
     "tunnel_name": os.getenv("CLOUDFLARE_TUNNEL_NAME", "cf-docker-tunnel-sync").strip(),
     "domain_name": get_domain_name(),
+    "services": [],
     "discovered_services": [],
     "all_containers": [],
     "dns_records": [],
     "logs": [],
     "docker_connected": True,
     "tombstones": {},
+    "last_change_plan": None,
+    "safety_guard_tripped": False,
+    "safety_details": None,
 }
 
 
@@ -955,20 +968,40 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
                         if origin_request:
                             service_item["originRequest"] = origin_request
 
+                        # 6-Stage Diagnostic Pipeline (Issue #49)
+                        is_hostname_valid = bool(hostname and hostname == normalized)
+                        domain_matches = bool(matches_domain)
+                        container_state = state.lower()
+
+                        stages = evaluate_service_stages(
+                            hostname=hostname,
+                            raw_hostname=raw_hostname,
+                            is_hostname_valid=is_hostname_valid,
+                            domain_matches=domain_matches,
+                            configured_domain=configured_domain,
+                            network_connected=has_shared_net,
+                            network_warning=service_item.get("network_warning"),
+                            container_state=container_state,
+                        )
+                        service_item["stages"] = stages
+                        service_item["status"] = compute_truthful_service_status(stages)
+
                         if is_tunneled:
                             services.append(service_item)
 
-                all_containers.append(
-                    {
-                        "name": c_name,
-                        "image": image,
-                        "state": state,
-                        "status": status_text,
-                        "hostname": hostname if hostname else "-",
-                        "is_tunneled": is_tunneled,
-                        "network_connected": has_shared_net,
-                    }
-                )
+                container_entry = {
+                    "name": c_name,
+                    "image": image,
+                    "state": state,
+                    "status": status_text,
+                    "hostname": hostname if hostname else "-",
+                    "is_tunneled": is_tunneled,
+                    "network_connected": has_shared_net,
+                }
+                if is_tunneled:
+                    container_entry["stages"] = stages
+                    container_entry["status"] = service_item["status"]
+                all_containers.append(container_entry)
     except Exception as e:
         sync_state["docker_connected"] = False
         add_log(f"Docker API Error: {e}")
@@ -1206,7 +1239,9 @@ def run_sync_logic():
             immediate_cleanup=immediate_cleanup,
             max_deletions=max_deletions,
         )
+        sync_state["_last_change_plan_obj"] = plan
         sync_state["last_change_plan"] = plan.model_dump()
+        sync_state["_last_change_plan_api"] = plan.to_api_dict()
 
         # Update tombstones in sync_state based on planned lifecycle
         for host in plan.tombstones_to_clear:
@@ -1219,6 +1254,25 @@ def run_sync_logic():
                 tombstones[host] = ts
                 add_log(f"⏳ Tombstoned {host} against flapping (grace period: {int(grace_period)}s)")
 
+        # Log predictive diff markers
+        for ing in plan.ingress_changes:
+            if ing.action == IngressActionType.CREATE:
+                add_log(f"+ [INGRESS CREATE] {ing.hostname} -> {ing.service}")
+            elif ing.action == IngressActionType.UPDATE:
+                add_log(f"~ [INGRESS UPDATE] {ing.hostname} -> {ing.service}")
+            elif ing.action == IngressActionType.DELETE:
+                add_log(f"- [INGRESS DELETE] {ing.hostname}")
+
+        for dns in plan.dns_changes:
+            if dns.action == DnsActionType.CREATE:
+                add_log(f"+ [DNS CREATE] {dns.hostname} -> {dns.target_content}")
+            elif dns.action == DnsActionType.UPDATE:
+                add_log(f"~ [DNS UPDATE] {dns.hostname} -> {dns.target_content}")
+            elif dns.action == DnsActionType.DELETE:
+                add_log(f"- [DNS DELETE] {dns.hostname}")
+            elif dns.action == DnsActionType.PROTECT:
+                add_log(f"🛡️ [DNS PROTECT] {dns.hostname} ({dns.reason})")
+
         # Stage 3: Execution Guardrails & Cloudflare Mutations
         if dry_run:
             add_log(
@@ -1227,18 +1281,58 @@ def run_sync_logic():
                 f"{plan.summary.dns_deletes} deletes, {plan.summary.dns_protected} protected). "
                 "Dry-run active: skipping Cloudflare API updates."
             )
+            sync_state["status"] = "Active / Synced (Dry-Run)"
+            sync_state["last_sync"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            return
+
+        # Blast-Radius Protection & Deletion Guard (Issue #51)
+        allow_mass_deletions = os.getenv("ALLOW_MASS_DELETIONS", "false").lower() in ("true", "1", "yes")
+        max_deletions_env = os.getenv("MAX_DELETIONS_PER_SYNC", os.getenv("MAX_DELETIONS_PER_RUN", "3"))
+        try:
+            max_deletions = int(max_deletions_env)
+        except ValueError:
+            max_deletions = 3
+
+        max_deletion_ratio_env = os.getenv("MAX_DELETION_RATIO")
+        max_deletion_ratio = float(max_deletion_ratio_env) if max_deletion_ratio_env else None
+
+        total_deletions = plan.summary.ingress_deletes + plan.summary.dns_deletes
+        route_deletions = max(plan.summary.ingress_deletes, plan.summary.dns_deletes)
+        planned_deletions = route_deletions if route_deletions > 0 else total_deletions
+
+        if allow_mass_deletions:
+            if planned_deletions > 0:
+                add_log(
+                    f"[SAFETY_GUARD] Mass deletion override active (ALLOW_MASS_DELETIONS=true). "
+                    f"Proceeding with {planned_deletions} planned deletions."
+                )
         else:
-            total_deletions = plan.summary.ingress_deletes + plan.summary.dns_deletes
-            if max_deletions is not None and total_deletions > max_deletions:
+            if max_deletions is not None and planned_deletions > max_deletions:
                 err_msg = (
-                    f"BLAST RADIUS GUARD: ChangePlan {plan.plan_id} requested {total_deletions} deletions "
-                    f"exceeding configured MAX_DELETIONS_PER_RUN ({max_deletions}). Aborting mutations."
+                    f"[SAFETY_GUARD] BLAST RADIUS GUARD: Mass deletion threshold exceeded "
+                    f"(planned: {planned_deletions}, limit: {max_deletions}). Sync aborted."
                 )
                 add_log(f"❌ {err_msg}")
                 raise BlastRadiusExceededError(err_msg)
 
-            # Ingress Configuration Mutation (Idempotent against _last_ingress)
-            if sync_state.get("_last_ingress") != plan.final_ingress_rules:
+            if max_deletion_ratio is not None and max_deletion_ratio > 0:
+                total_routes = plan.summary.total_services_discovered + planned_deletions
+                if total_routes > 0:
+                    ratio = planned_deletions / float(total_routes)
+                    if ratio > max_deletion_ratio:
+                        err_msg = (
+                            f"[SAFETY_GUARD] BLAST RADIUS GUARD: Mass deletion ratio exceeded "
+                            f"(planned ratio: {ratio:.2f}, limit: {max_deletion_ratio:.2f}). Sync aborted."
+                        )
+                        add_log(f"❌ {err_msg}")
+                        raise BlastRadiusExceededError(err_msg)
+
+        # 1. Ingress Configuration Update
+        ingress_failed = False
+        dns_failed = False
+
+        if sync_state.get("_last_ingress") != plan.final_ingress_rules:
+            try:
                 cf_api(
                     f"/accounts/{account_id}/cfd_tunnel/{tunnel_id}/configurations",
                     token,
@@ -1247,9 +1341,13 @@ def run_sync_logic():
                 )
                 sync_state["_last_ingress"] = plan.final_ingress_rules
                 add_log("✅ Updated Cloudflare Tunnel Ingress rules")
+            except Exception as e:
+                ingress_failed = True
+                add_log(f"❌ Failed to update Cloudflare Ingress rules: {e}")
 
-            # DNS Mutations
-            for change in plan.dns_changes:
+        # 2. DNS Record Mutations
+        for change in plan.dns_changes:
+            try:
                 if change.action == DnsActionType.CREATE:
                     payload = {
                         "type": change.record_type,
@@ -1294,6 +1392,36 @@ def run_sync_logic():
 
                 elif change.action == DnsActionType.PROTECT:
                     add_log(f"🛡️ Protected DNS record for {change.hostname} ({change.reason})")
+            except Exception as e:
+                dns_failed = True
+                add_log(f"❌ DNS mutation failed for {change.hostname}: {e}")
+
+        # Truthful Per-Service Diagnostic Stage Updates (Issue #49)
+        for s in services:
+            stages = s.setdefault("stages", {})
+            if ingress_failed:
+                stages["CLOUDFLARE_INGRESS"] = {
+                    "status": "FAILED",
+                    "message": "Cloudflare Tunnel ingress configuration update failed",
+                }
+            else:
+                stages["CLOUDFLARE_INGRESS"] = {
+                    "status": "PASS",
+                    "message": f"Ingress rule active: {s.get('hostname')} -> {s.get('service')}",
+                }
+
+            if dns_failed:
+                stages["CLOUDFLARE_DNS"] = {
+                    "status": "FAILED",
+                    "message": "Cloudflare DNS synchronization failed",
+                }
+            else:
+                stages["CLOUDFLARE_DNS"] = {
+                    "status": "PASS",
+                    "message": f"DNS CNAME active pointing to {target_cname}",
+                }
+
+            s["status"] = compute_truthful_service_status(stages)
 
         # Reconstruct synced_dns for UI & status dashboard
         synced_dns = []
@@ -1322,10 +1450,27 @@ def run_sync_logic():
             )
 
         sync_state["dns_records"] = synced_dns
-        sync_state["status"] = "Active / Synced"
-        sync_state["last_sync"] = time.strftime("%Y-%m-%d %H:%M:%S")
-        add_log("🎉 Sync completed successfully!")
+        sync_state["services"] = services
+        sync_state["discovered_services"] = services
 
+        if ingress_failed or dns_failed or any(s.get("status") in ("Degraded", "Failed") for s in services):
+            sync_state["status"] = "Degraded"
+            add_log("⚠️ Sync completed with degraded service states.")
+        else:
+            sync_state["status"] = "Active / Synced"
+            add_log("🎉 Sync completed successfully!")
+
+        sync_state["last_sync"] = time.strftime("%Y-%m-%d %H:%M:%S")
+
+    except BlastRadiusExceededError as b_err:
+        add_log(f"❌ {b_err}")
+        sync_state["status"] = "SAFETY_GUARD_TRIPPED"
+        sync_state["safety_guard_tripped"] = True
+        sync_state["safety_details"] = {
+            "error": str(b_err),
+            "planned_deletions": planned_deletions,
+            "limit": max_deletions,
+        }
     except Exception as e:
         add_log(f"❌ Sync Error: {e}")
         sync_state["status"] = f"Error: {e}"
@@ -1542,11 +1687,214 @@ def api_status(authenticated: bool = Depends(check_dashboard_auth)):
     return JSONResponse(sanitize_sync_state(sync_state))
 
 
+@app.get("/api/change-plan")
+def api_change_plan(authenticated: bool = Depends(check_dashboard_auth)):
+    """Exposes the latest computed ChangePlan or generates a predictive dry-run plan (Issue #50)."""
+    plan_obj = sync_state.get("_last_change_plan_obj")
+    if plan_obj and hasattr(plan_obj, "to_api_dict"):
+        return JSONResponse(plan_obj.to_api_dict())
+    if (
+        sync_state.get("last_change_plan")
+        and isinstance(sync_state["last_change_plan"], dict)
+        and "actions" in sync_state["last_change_plan"]
+    ):
+        return JSONResponse(sync_state["last_change_plan"])
+
+    tunnel_name = os.getenv("CLOUDFLARE_TUNNEL_NAME", "cf-docker-tunnel-sync").strip()
+    tunnel_id = sync_state.get("tunnel_id") or "preview-tunnel-id"
+    zone_id = sync_state.get("zone_id") or "preview-zone-id"
+
+    services, all_containers = get_docker_containers()
+    snapshot = build_discovery_snapshot(
+        services=services,
+        all_containers=all_containers,
+        docker_ok=sync_state.get("docker_connected", True),
+        timestamp=time.time(),
+    )
+    remote = RemoteState(
+        tunnel_id=tunnel_id,
+        tunnel_name=tunnel_name,
+        zone_id=zone_id,
+        tunnel_target=f"{tunnel_id}.cfargotunnel.com",
+        existing_ingress_rules=sync_state.get("_last_ingress") or [],
+        existing_dns_records=[],
+    )
+    plan = compute_change_plan(
+        snapshot=snapshot,
+        remote=remote,
+        tombstones=sync_state.get("tombstones", {}),
+        now=time.time(),
+        policy=OwnershipPolicy.ADOPT_AND_MANAGE,
+        dry_run=True,
+    )
+    sync_state["_last_change_plan_obj"] = plan
+    sync_state["last_change_plan"] = plan.model_dump()
+    sync_state["_last_change_plan_api"] = plan.to_api_dict()
+    return JSONResponse(plan.to_api_dict())
+
+
 @app.post("/api/sync")
 async def api_sync(authenticated: bool = Depends(check_dashboard_auth)):
     await asyncio.to_thread(run_sync_logic)
     return JSONResponse({"message": "Sync triggered", "state": sanitize_sync_state(sync_state)})
 
 
+def run_preflight_validation(dry_run: bool = True) -> int:
+    """Non-mutating preflight validation mode (Issue #48).
+
+    Guarantees that only read-only queries are executed against Docker and Cloudflare.
+    Never calls mutator methods.
+    Returns 0 on valid environment, 1 on error with actionable remedy messages.
+    """
+    logger.info("==================================================")
+    logger.info("🔍 Starting Non-Mutating Preflight Validation (R01)")
+    logger.info("==================================================")
+
+    failed_checks = 0
+
+    # 1. Docker Socket Connectivity & Permissions
+    try:
+        ver_resp = docker_api("/version")
+        if not ver_resp or not isinstance(ver_resp, dict):
+            logger.error("❌ [PREFLIGHT FAIL] Docker daemon returned invalid response.")
+            logger.error("   [REMEDY] Ensure Docker socket is mounted at /var/run/docker.sock with read permissions.")
+            failed_checks += 1
+        else:
+            docker_version = ver_resp.get("Version", "unknown")
+            logger.info(f"✅ [PREFLIGHT PASS] Docker daemon connected (Version: {docker_version}).")
+    except Exception as e:
+        logger.error(f"❌ [PREFLIGHT FAIL] Cannot connect to Docker socket: {e}")
+        logger.error(
+            "   [REMEDY] Ensure /var/run/docker.sock is mounted into the container (-v /var/run/docker.sock:/var/run/docker.sock:ro)."
+        )
+        failed_checks += 1
+
+    # 2. Cloudflare API Token Validity & Permissions
+    token = get_token()
+    if not token:
+        logger.error("❌ [PREFLIGHT FAIL] Cloudflare API token is missing.")
+        logger.error(
+            "   [REMEDY] Set CLOUDFLARE_API_TOKEN environment variable with Zone:DNS:Edit and Account:Cloudflare Tunnel:Edit permissions."
+        )
+        failed_checks += 1
+    else:
+        try:
+            verify_resp = cf_api("/user/tokens/verify", token, method="GET")
+            status = verify_resp.get("result", {}).get("status")
+            if status != "active":
+                logger.error(f"❌ [PREFLIGHT FAIL] Cloudflare API token verification failed (status: '{status}').")
+                logger.error(
+                    "   [REMEDY] Verify that the token is active and has Zone:DNS:Edit and Account:Cloudflare Tunnel:Edit permissions."
+                )
+                failed_checks += 1
+            else:
+                logger.info("✅ [PREFLIGHT PASS] Cloudflare API token verified and active.")
+        except Exception as e:
+            logger.error(f"❌ [PREFLIGHT FAIL] Cloudflare API token verification failed: {e}")
+            logger.error(
+                "   [REMEDY] Verify network connectivity to api.cloudflare.com and check CLOUDFLARE_API_TOKEN."
+            )
+            failed_checks += 1
+
+    # 3. Target Cloudflare Zone and Tunnel ID
+    domain = get_domain_name()
+    if not domain:
+        logger.error("❌ [PREFLIGHT FAIL] DOMAIN_NAME environment variable is not configured.")
+        logger.error("   [REMEDY] Set DOMAIN_NAME=yourdomain.com in environment or compose file.")
+        failed_checks += 1
+    elif token:
+        try:
+            zones_resp = cf_api(f"/zones?name={domain}", token, method="GET")
+            zones = zones_resp.get("result", [])
+            if not zones:
+                logger.error(f"❌ [PREFLIGHT FAIL] Zone for domain '{domain}' not found in Cloudflare account.")
+                logger.error(
+                    "   [REMEDY] Verify DOMAIN_NAME matches a zone in your Cloudflare account and token has Zone:Read permission."
+                )
+                failed_checks += 1
+            else:
+                zone_id = zones[0]["id"]
+                logger.info(f"✅ [PREFLIGHT PASS] Cloudflare Zone verified for '{domain}' (Zone ID: {zone_id}).")
+
+                account_id = os.getenv("CLOUDFLARE_ACCOUNT_ID")
+                if not account_id:
+                    zone_account = zones[0].get("account", {})
+                    account_id = zone_account.get("id")
+                if not account_id:
+                    acc_resp = cf_api("/accounts", token, method="GET")
+                    accs = acc_resp.get("result", [])
+                    if accs:
+                        account_id = accs[0].get("id")
+
+                tunnel_name = os.getenv("CLOUDFLARE_TUNNEL_NAME", "cf-docker-tunnel-sync").strip()
+                tunnel_id = os.getenv("CLOUDFLARE_TUNNEL_ID")
+
+                if tunnel_id and account_id:
+                    tun_resp = cf_api(f"/accounts/{account_id}/cfd_tunnel/{tunnel_id}", token, method="GET")
+                    tun = tun_resp.get("result")
+                    if tun and not tun.get("deleted_at"):
+                        logger.info(f"✅ [PREFLIGHT PASS] Cloudflare Tunnel ID '{tunnel_id}' verified.")
+                    else:
+                        logger.error(f"❌ [PREFLIGHT FAIL] Cloudflare Tunnel ID '{tunnel_id}' not found or deleted.")
+                        logger.error("   [REMEDY] Check CLOUDFLARE_TUNNEL_ID or create a new tunnel.")
+                        failed_checks += 1
+                elif account_id:
+                    tunnels_resp = cf_api(
+                        f"/accounts/{account_id}/cfd_tunnel?name={tunnel_name}&is_deleted=false", token, method="GET"
+                    )
+                    tuns = tunnels_resp.get("result", [])
+                    if tuns:
+                        logger.info(
+                            f"✅ [PREFLIGHT PASS] Cloudflare Tunnel '{tunnel_name}' found (ID: {tuns[0]['id']})."
+                        )
+                    else:
+                        logger.error(f"❌ [PREFLIGHT FAIL] Cloudflare Tunnel '{tunnel_name}' does not exist.")
+                        logger.error(
+                            f"   [REMEDY] Create tunnel '{tunnel_name}' in Cloudflare Zero Trust dashboard or run 'cloudflared tunnel create {tunnel_name}'."
+                        )
+                        failed_checks += 1
+        except Exception as e:
+            logger.error(f"❌ [PREFLIGHT FAIL] Failed to verify Zone/Tunnel with Cloudflare API: {e}")
+            logger.error("   [REMEDY] Verify token permissions for Zone:Read and Cloudflare Tunnel:Read.")
+            failed_checks += 1
+
+    # 4. Network Inspection & Docker Container Discovery
+    try:
+        services, all_containers = get_docker_containers()
+        logger.info(
+            f"✅ [PREFLIGHT PASS] Inspected Docker containers ({len(all_containers)} total containers, {len(services)} tunneled services)."
+        )
+    except Exception as e:
+        logger.warning(f"⚠️ [PREFLIGHT WARN] Network inspection encountered an issue: {e}")
+
+    logger.info("==================================================")
+    if failed_checks == 0:
+        logger.info("🎉 [PREFLIGHT SUCCESS] All preflight checks passed successfully. Zero mutations performed.")
+        return 0
+    else:
+        logger.error(
+            f"❌ [PREFLIGHT ABORT] Preflight failed with {failed_checks} error(s). Please review remedy messages above."
+        )
+        return 1
+
+
 if __name__ == "__main__":
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(description="Cloudflare Docker Tunnel Sync")
+    parser.add_argument("--preflight", action="store_true", help="Run non-mutating preflight validation and exit")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Run sync in predictive dry-run mode (no Cloudflare mutations)"
+    )
+    args, unknown = parser.parse_known_args()
+
+    if args.dry_run:
+        os.environ["DRY_RUN"] = "true"
+
+    preflight_env = os.getenv("PREFLIGHT_ONLY", "false").lower() in ("true", "1", "yes")
+    if args.preflight or preflight_env:
+        exit_code = run_preflight_validation()
+        sys.exit(exit_code)
+
     uvicorn.run("app:app", host="0.0.0.0", port=8090)
