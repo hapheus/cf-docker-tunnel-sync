@@ -4,6 +4,9 @@
 [![Docker Pulls](https://img.shields.io/docker/pulls/hapheus/cf-tunnel-sync?logo=docker&logoColor=white)](https://hub.docker.com/r/hapheus/cf-tunnel-sync)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
+> ⚡ **Headless by Design**: `hapheus/cf-tunnel-sync` runs autonomously in the background without requiring any exposed ports or web server overhead.  
+> 📊 **Need a GUI?** Check out the optional companion container [`hapheus/cf-tunnel-dashboard`](https://hub.docker.com/r/hapheus/cf-tunnel-dashboard) for visual monitoring and live route diagnostics.
+
 `hapheus/cf-tunnel-sync` automatically discovers Docker containers across your host and synchronizes Cloudflare Zero Trust Tunnel ingress rules and proxied DNS (CNAME) records in real time.
 
 ---
@@ -110,11 +113,26 @@ Enable any container for automatic synchronization by applying Docker labels:
 
 ---
 
-## 📊 Web Dashboard
+## 🖥️ Optional Web Dashboard Companion
 
-To access the visual web UI:
-- **Embedded:** If `STATUS_PAGE_ENABLED=true`, the internal status endpoint is active on port `8090`.
-- **Companion Nginx Dashboard:** Deploy [`hapheus/cf-tunnel-dashboard`](https://hub.docker.com/r/hapheus/cf-tunnel-dashboard) on the same network for a secured UI with HTTP Basic Authentication and modern styling.
+`cf-tunnel-sync` performs all synchronization, self-healing, and preflight checks autonomously without needing a GUI.
+
+If you would like a visual status dashboard, add the companion [`hapheus/cf-tunnel-dashboard`](https://hub.docker.com/r/hapheus/cf-tunnel-dashboard) container to your stack:
+
+```yaml
+  cf-tunnel-dashboard:
+    image: hapheus/cf-tunnel-dashboard:latest
+    container_name: cf-tunnel-dashboard
+    restart: unless-stopped
+    ports:
+      - "8090:80"
+    environment:
+      - DASHBOARD_AUTH_ENABLED=false # Set to true to require basic auth
+    networks:
+      - tunnel_net
+```
+
+Alternatively, you can publish port `8090:8090` directly on `cf-tunnel-sync` to access its internal status API and Prometheus metrics.
 
 ---
 

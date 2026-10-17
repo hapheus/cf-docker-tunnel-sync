@@ -4,6 +4,8 @@
 [![Docker Pulls](https://img.shields.io/docker/pulls/hapheus/cf-tunnel-dashboard?logo=docker&logoColor=white)](https://hub.docker.com/r/hapheus/cf-tunnel-dashboard)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
+> 💡 **Optional Companion Frontend**: `hapheus/cf-tunnel-dashboard` is an optional visual web frontend for [`hapheus/cf-tunnel-sync`](https://hub.docker.com/r/hapheus/cf-tunnel-sync). The core sync daemon runs completely headless and does not require this container to synchronize tunnels and DNS.
+
 `hapheus/cf-tunnel-dashboard` is the dedicated web UI and monitoring frontend for [`hapheus/cf-tunnel-sync`](https://hub.docker.com/r/hapheus/cf-tunnel-sync). It provides an operator dashboard to inspect Cloudflare Tunnel connectivity, discovered Docker containers, dynamic ingress routes, DNS synchronization states, and system logs.
 
 The image is a lightweight Nginx container (~28 MB) configured with reverse-proxy routing to `cf-tunnel-sync` and built-in HTTP Basic Authentication.
@@ -100,5 +102,6 @@ services:
 ## 🔗 Related Resources
 
 - **Core Sync Image:** [`hapheus/cf-tunnel-sync`](https://hub.docker.com/r/hapheus/cf-tunnel-sync)
+- **10-Minute Canonical Quickstart:** [github.com/hapheus/cf-docker-tunnel-sync/blob/main/QUICKSTART.md](https://github.com/hapheus/cf-docker-tunnel-sync/blob/main/QUICKSTART.md)
 - **Source Code & Issue Tracker:** [github.com/hapheus/cf-docker-tunnel-sync](https://github.com/hapheus/cf-docker-tunnel-sync)
 - **Report an Issue:** [github.com/hapheus/cf-docker-tunnel-sync/issues](https://github.com/hapheus/cf-docker-tunnel-sync/issues)
