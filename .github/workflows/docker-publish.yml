@@ -75,6 +75,7 @@ jobs:
 
       - name: Update Docker Hub Description
         if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        continue-on-error: true
         uses: peter-evans/dockerhub-description@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
