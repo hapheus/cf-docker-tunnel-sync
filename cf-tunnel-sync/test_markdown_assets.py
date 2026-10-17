@@ -117,6 +117,10 @@ def test_dockerhub_markdown_files_exist_and_consistent():
     assert "CLOUDFLARE_TUNNEL_NAME" in sync_content
     assert "cf.tunnel.enable" in sync_content
     assert "hapheus/cf-tunnel-sync" in sync_content
+    assert "QUICKSTART.md" in sync_content
+    assert "PREFLIGHT_ONLY" in sync_content
+    assert "MAX_DELETIONS_PER_SYNC" in sync_content
+    assert "ALLOW_MASS_DELETIONS" in sync_content
 
 
 def test_markdown_asset_scanner_detects_broken_link(tmp_path):

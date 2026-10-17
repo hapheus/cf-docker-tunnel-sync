@@ -22,6 +22,10 @@
 
 ---
 
+> 💡 **Quickstart:** Looking for a fast walkthrough under 10 minutes? Check out the [10-Minute Canonical Quickstart Guide](https://github.com/hapheus/cf-docker-tunnel-sync/blob/main/QUICKSTART.md).
+
+---
+
 ## 🚀 Quick Start with Docker Compose
 
 Deploy the core gateway stack alongside `cloudflared`:
@@ -90,7 +94,10 @@ Enable any container for automatic synchronization by applying Docker labels:
 | `POLL_INTERVAL` | No | `30` | Fallback polling interval in seconds for Docker state reconciliation. |
 | `SYNC_ON_STARTUP` | No | `true` | Reconcile all existing running containers immediately on startup. |
 | `LOG_LEVEL` | No | `INFO` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`). |
-| `DRY_RUN` | No | `false` | When `true`, logs planned Cloudflare API actions without making changes. |
+| `DRY_RUN` | No | `false` | When `true`, plans and diffs changes without mutating Cloudflare. |
+| `PREFLIGHT_ONLY` | No | `false` | When `true`, executes read-only readiness checks and exits immediately without mutations. |
+| `MAX_DELETIONS_PER_SYNC` | No | `3` | Maximum ingress/DNS route deletions permitted per sync cycle before safety guard aborts. |
+| `ALLOW_MASS_DELETIONS` | No | `false` | Explicit safety override to bypass blast-radius mass-deletion guard. |
 | `DOCKER_HOST` | No | `unix:///var/run/docker.sock` | Docker daemon socket URI. |
 | `STATUS_PAGE_ENABLED` | No | `true` | Enable internal API & status endpoint on port `8090`. |
 | `STATUS_PAGE_PORT` | No | `8090` | Internal status API listening port. |
@@ -109,5 +116,6 @@ To access the visual web UI:
 ## 🔗 Links & Resources
 
 - **Dashboard Image:** [`hapheus/cf-tunnel-dashboard`](https://hub.docker.com/r/hapheus/cf-tunnel-dashboard)
+- **10-Minute Quickstart Guide:** [github.com/hapheus/cf-docker-tunnel-sync/blob/main/QUICKSTART.md](https://github.com/hapheus/cf-docker-tunnel-sync/blob/main/QUICKSTART.md)
 - **Source Code & Documentation:** [github.com/hapheus/cf-docker-tunnel-sync](https://github.com/hapheus/cf-docker-tunnel-sync)
 - **Issue Tracker:** [github.com/hapheus/cf-docker-tunnel-sync/issues](https://github.com/hapheus/cf-docker-tunnel-sync/issues)
