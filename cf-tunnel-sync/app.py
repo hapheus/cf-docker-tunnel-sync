@@ -3,6 +3,7 @@ import http.client
 import json
 import logging
 import os
+import re
 import secrets
 import socket
 import threading
@@ -45,8 +46,52 @@ class HealthCheckFilter(logging.Filter):
 logging.getLogger("uvicorn.access").addFilter(HealthCheckFilter())
 
 
+LABEL_REGEX = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+
+
+def normalize_hostname(hostname: Optional[str]) -> Optional[str]:
+    """Normalize and validate a hostname string according to RFC 1123.
+
+    Strips scheme, trailing path, query/fragments, authentication, ports,
+    and trailing dots. Lowercases all characters and ensures every DNS label
+    satisfies RFC 1123 length and character restrictions.
+    Returns None if the hostname is invalid or empty.
+    """
+    if not hostname or not isinstance(hostname, str):
+        return None
+    raw = hostname.strip()
+    if not raw:
+        return None
+    if "://" in raw:
+        raw = raw.split("://", 1)[1]
+    if "/" in raw:
+        raw = raw.split("/", 1)[0]
+    if "?" in raw:
+        raw = raw.split("?", 1)[0]
+    if "#" in raw:
+        raw = raw.split("#", 1)[0]
+    if "@" in raw:
+        raw = raw.split("@", 1)[1]
+    if ":" in raw and not raw.startswith("["):
+        raw = raw.split(":", 1)[0]
+    raw = raw.strip().rstrip(".").lower()
+    if not raw or len(raw) > 253:
+        return None
+    labels = raw.split(".")
+    for i, label in enumerate(labels):
+        if not label or len(label) > 63:
+            return None
+        if label == "*":
+            if i != 0 or len(labels) < 2:
+                return None
+            continue
+        if not LABEL_REGEX.match(label):
+            return None
+    return raw
+
+
 def get_domain_name() -> str:
-    return os.getenv("DOMAIN_NAME", "").strip()
+    return os.getenv("DOMAIN_NAME", "").strip().rstrip(".").lower()
 
 
 sync_lock = threading.Lock()
@@ -444,6 +489,10 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
             "protocol": "cf.tunnel.protocol",
             "scheme": "cf.tunnel.scheme",
             "notlsverify": "cf.tunnel.origin_request.no_tls_verify",
+            "cloudflared.host": "cf.tunnel.hostname",
+            "cf.tunnel.host": "cf.tunnel.hostname",
+            "hostname": "cf.tunnel.hostname",
+            "host": "cf.tunnel.hostname",
         }
 
         containers = docker_api("/containers/json?all=true")
@@ -489,19 +538,28 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
                 raw_hostname = (
                     labels.get("cf.tunnel.hostname")
                     or labels.get("cf.tunnel.domain")
+                    or labels.get("cf.tunnel.host")
                     or labels.get("cloudflared.hostname")
                     or labels.get("cloudflared.domain")
+                    or labels.get("cloudflared.host")
+                    or labels.get("hostname")
+                    or labels.get("host")
                 )
-                hostname = str(raw_hostname).strip() if raw_hostname else ""
-                if "://" in hostname:
-                    hostname = hostname.split("://", 1)[1]
-                hostname = hostname.split("/", 1)[0].strip()
+
+                hostname = ""
+                if raw_hostname:
+                    normalized = normalize_hostname(str(raw_hostname))
+                    if not normalized:
+                        add_log(
+                            f"⚠️ Invalid hostname '{raw_hostname}' for container '{c_name}' rejected (must be valid RFC 1123)"
+                        )
+                    else:
+                        hostname = normalized
 
                 # Domain scoping: only match if hostname belongs to configured DOMAIN_NAME
                 matches_domain = True
                 if configured_domain and hostname:
-                    h_lower = hostname.lower()
-                    matches_domain = (h_lower == configured_domain) or (h_lower.endswith("." + configured_domain))
+                    matches_domain = (hostname == configured_domain) or (hostname.endswith("." + configured_domain))
 
                 # Optional tunnel scoping: if cf.tunnel.name is set, verify it matches CLOUDFLARE_TUNNEL_NAME
                 target_tunnel = (
@@ -518,11 +576,10 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
                 service_url = ""
 
                 if hostname and state == "running" and matches_domain and matches_tunnel:
-                    h_lower = hostname.lower()
-                    if h_lower in seen_hostnames:
+                    if hostname in seen_hostnames:
                         add_log(f"⚠️ Duplicate hostname '{hostname}' for container '{c_name}' ignored")
                     else:
-                        seen_hostnames.add(h_lower)
+                        seen_hostnames.add(hostname)
                         is_tunneled = True
 
                         # Protocol / Scheme (precedence: modern cf.tunnel.* > legacy cloudflared.* > bare shorthand)
@@ -715,12 +772,19 @@ def build_ingress_rules(services: list) -> list:
     """
     rules = []
     # Deterministic alphabetical sorting by hostname to prevent spurious configuration updates
-    sorted_services = sorted(services, key=lambda s: s.get("hostname", ""))
+    sorted_services = sorted(
+        services,
+        key=lambda s: normalize_hostname(s.get("hostname", "")) or s.get("hostname", ""),
+    )
 
     for s in sorted_services:
-        hostname = s.get("hostname")
+        raw_host = s.get("hostname")
         service_target = s.get("service")
-        if not hostname or not service_target:
+        if not raw_host or not service_target:
+            continue
+
+        hostname = normalize_hostname(raw_host)
+        if not hostname:
             continue
 
         rule = {
@@ -875,7 +939,10 @@ def run_sync_logic():
         target_cname = f"{tunnel_id}.cfargotunnel.com"
         synced_dns = []
         for s in services:
-            host = s["hostname"]
+            raw_host = s.get("hostname")
+            host = normalize_hostname(raw_host)
+            if not host:
+                continue
             dns_resp = cf_api(f"/zones/{zone_id}/dns_records?type=CNAME&name={host}", token)
             records = dns_resp.get("result", [])
             dns_payload = {"type": "CNAME", "name": host, "content": target_cname, "proxied": True, "ttl": 1}
@@ -888,10 +955,12 @@ def run_sync_logic():
             else:
                 cf_api(f"/zones/{zone_id}/dns_records", token, method="POST", data=dns_payload)
                 add_log(f"➕ Created DNS record for {host}")
-            synced_dns.append({"hostname": host, "target": target_cname, "service": s["service"], "proxied": True})
+            synced_dns.append(
+                {"hostname": host, "target": target_cname, "service": s.get("service", "unknown"), "proxied": True}
+            )
 
         # 7. Cleanup obsolete DNS records with grace period / tombstoning
-        current_hosts = {s["hostname"] for s in services}
+        current_hosts = {normalize_hostname(s["hostname"]) for s in services if normalize_hostname(s.get("hostname"))}
         tombstones = sync_state.setdefault("tombstones", {})
         now = time.time()
 
@@ -909,10 +978,12 @@ def run_sync_logic():
 
         all_dns = cf_api(f"/zones/{zone_id}/dns_records?type=CNAME&content={target_cname}", token)
         for rec in all_dns.get("result", []):
-            rec_name = rec["name"]
+            rec_id = rec.get("id")
+            raw_rec_name = rec.get("name", "")
+            rec_name = normalize_hostname(raw_rec_name) or raw_rec_name.strip().rstrip(".").lower()
             if rec_name not in current_hosts:
                 if immediate_cleanup or grace_period <= 0:
-                    cf_api(f"/zones/{zone_id}/dns_records/{rec['id']}", token, method="DELETE")
+                    cf_api(f"/zones/{zone_id}/dns_records/{rec_id}", token, method="DELETE")
                     tombstones.pop(rec_name, None)
                     add_log(f"🗑️ Deleted obsolete DNS record for {rec_name}")
                 else:
@@ -922,7 +993,7 @@ def run_sync_logic():
                     else:
                         elapsed = now - tombstones[rec_name]
                         if elapsed >= grace_period:
-                            cf_api(f"/zones/{zone_id}/dns_records/{rec['id']}", token, method="DELETE")
+                            cf_api(f"/zones/{zone_id}/dns_records/{rec_id}", token, method="DELETE")
                             del tombstones[rec_name]
                             add_log(f"🗑️ Deleted obsolete DNS record for {rec_name} after grace period expired")
                         else:
