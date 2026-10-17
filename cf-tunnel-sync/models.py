@@ -59,3 +59,4 @@ class SyncStateModel(BaseModel):
     logs: List[str] = Field(default_factory=list)
     docker_connected: bool = True
     tombstones: Dict[str, float] = Field(default_factory=dict)
+    last_change_plan: Optional[Dict[str, Any]] = None

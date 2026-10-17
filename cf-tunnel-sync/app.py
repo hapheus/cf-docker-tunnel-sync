@@ -19,6 +19,14 @@ from fastapi import Depends, FastAPI, HTTPException, Response, status
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel
+from reconcile import (
+    BlastRadiusExceededError,
+    DnsActionType,
+    OwnershipPolicy,
+    RemoteState,
+    build_discovery_snapshot,
+    compute_change_plan,
+)
 
 LOG_LEVEL_NAME = os.getenv("LOG_LEVEL", "INFO").upper()
 LOG_LEVEL = getattr(logging, LOG_LEVEL_NAME, logging.INFO)
@@ -1125,92 +1133,193 @@ def run_sync_logic():
         discovered_names = [f"{s['hostname']} ({s['service']})" for s in services]
         add_log(f"🔍 Discovered Cloudflare-labeled services: {', '.join(discovered_names) if services else 'None'}")
 
-        # 5. Build Cloudflare Tunnel Ingress Rules (Idempotent)
-        ingress_rules = build_ingress_rules(services)
-
-        if sync_state.get("_last_ingress") != ingress_rules:
-            cf_api(
-                f"/accounts/{account_id}/cfd_tunnel/{tunnel_id}/configurations",
-                token,
-                method="PUT",
-                data={"config": {"ingress": ingress_rules}},
-            )
-            sync_state["_last_ingress"] = ingress_rules
-            add_log("✅ Updated Cloudflare Tunnel Ingress rules")
-
-        # 6. DNS Records Sync (CNAME per subdomain, Idempotent)
+        # 5. Pure Reconciliation Pipeline (Findings A01 & F02 / Issue #46)
         target_cname = f"{tunnel_id}.cfargotunnel.com"
-        synced_dns = []
+
+        # Stage 1: Build DiscoverySnapshot & RemoteState
+        snapshot = build_discovery_snapshot(
+            services=services,
+            all_containers=all_containers,
+            docker_ok=sync_state.get("docker_connected", True),
+            timestamp=time.time(),
+        )
+
+        tunnel_cfg = cf_api(f"/accounts/{account_id}/cfd_tunnel/{tunnel_id}/configurations", token)
+        existing_ingress = (
+            tunnel_cfg.get("result", {}).get("config", {}).get("ingress", [])
+            if isinstance(tunnel_cfg, dict) and isinstance(tunnel_cfg.get("result"), dict)
+            else []
+        )
+
+        dns_records_map: Dict[str, Dict[str, Any]] = {}
+        all_dns = cf_api(f"/zones/{zone_id}/dns_records?type=CNAME&content={target_cname}", token)
+        for rec in all_dns.get("result") or []:
+            if isinstance(rec, dict) and rec.get("id"):
+                dns_records_map[rec["id"]] = rec
+
         for s in services:
-            raw_host = s.get("hostname")
-            host = normalize_hostname(raw_host)
-            if not host:
-                continue
-            dns_resp = cf_api(f"/zones/{zone_id}/dns_records?type=CNAME&name={host}", token)
-            records = dns_resp.get("result", [])
-            dns_payload = {"type": "CNAME", "name": host, "content": target_cname, "proxied": True, "ttl": 1}
-            if records:
-                rec = records[0]
-                rec_id = rec["id"]
-                if rec.get("content") != target_cname or not rec.get("proxied"):
-                    cf_api(f"/zones/{zone_id}/dns_records/{rec_id}", token, method="PUT", data=dns_payload)
-                    add_log(f"🔄 Updated DNS record for {host}")
-            else:
-                cf_api(f"/zones/{zone_id}/dns_records", token, method="POST", data=dns_payload)
-                add_log(f"➕ Created DNS record for {host}")
-            synced_dns.append(
-                {"hostname": host, "target": target_cname, "service": s.get("service", "unknown"), "proxied": True}
-            )
+            raw_h = s.get("hostname")
+            norm_h = normalize_hostname(raw_h)
+            if norm_h:
+                host_dns = cf_api(f"/zones/{zone_id}/dns_records?type=CNAME&name={norm_h}", token)
+                for rec in host_dns.get("result") or []:
+                    if isinstance(rec, dict) and rec.get("id"):
+                        dns_records_map[rec["id"]] = rec
 
-        # 7. Cleanup obsolete DNS records with grace period / tombstoning
-        current_hosts = {normalize_hostname(s["hostname"]) for s in services if normalize_hostname(s.get("hostname"))}
-        tombstones = sync_state.setdefault("tombstones", {})
-        now = time.time()
+        remote = RemoteState(
+            tunnel_id=tunnel_id,
+            tunnel_name=tunnel_name,
+            zone_id=zone_id,
+            tunnel_target=target_cname,
+            existing_ingress_rules=existing_ingress,
+            existing_dns_records=list(dns_records_map.values()),
+        )
 
-        # Clear tombstones for any active host that has recovered
-        for host in current_hosts:
-            if host in tombstones:
-                del tombstones[host]
-                add_log(f"Container recovered for {host}, cleared tombstone")
+        # Stage 2: Pure Reconciler Computation
+        policy_str = os.getenv("OWNERSHIP_POLICY", "adopt_and_manage").lower()
+        try:
+            policy = OwnershipPolicy(policy_str)
+        except Exception:
+            policy = OwnershipPolicy.ADOPT_AND_MANAGE
 
+        dry_run = os.getenv("DRY_RUN", "false").lower() in ("true", "1", "yes")
         immediate_cleanup = os.getenv("DNS_IMMEDIATE_CLEANUP", "false").lower() in ("true", "1", "yes")
         try:
             grace_period = float(os.getenv("DNS_CLEANUP_GRACE_PERIOD", 300.0))
         except ValueError:
             grace_period = 300.0
 
-        all_dns = cf_api(f"/zones/{zone_id}/dns_records?type=CNAME&content={target_cname}", token)
-        for rec in all_dns.get("result", []):
-            rec_id = rec.get("id")
-            raw_rec_name = rec.get("name", "")
-            rec_name = normalize_hostname(raw_rec_name) or raw_rec_name.strip().rstrip(".").lower()
-            if rec_name not in current_hosts:
-                if immediate_cleanup or grace_period <= 0:
-                    cf_api(f"/zones/{zone_id}/dns_records/{rec_id}", token, method="DELETE")
-                    tombstones.pop(rec_name, None)
-                    add_log(f"🗑️ Deleted obsolete DNS record for {rec_name}")
-                else:
-                    if rec_name not in tombstones:
-                        tombstones[rec_name] = now
-                        add_log(f"⏳ Tombstoned {rec_name} against flapping (grace period: {int(grace_period)}s)")
+        max_deletions_env = os.getenv("MAX_DELETIONS_PER_RUN")
+        max_deletions = int(max_deletions_env) if max_deletions_env and max_deletions_env.isdigit() else None
+
+        tombstones = sync_state.setdefault("tombstones", {})
+        now = time.time()
+
+        plan = compute_change_plan(
+            snapshot=snapshot,
+            remote=remote,
+            tombstones=tombstones,
+            now=now,
+            policy=policy,
+            dns_delete_grace_seconds=grace_period,
+            dry_run=dry_run,
+            immediate_cleanup=immediate_cleanup,
+            max_deletions=max_deletions,
+        )
+        sync_state["last_change_plan"] = plan.model_dump()
+
+        # Update tombstones in sync_state based on planned lifecycle
+        for host in plan.tombstones_to_clear:
+            if host in tombstones:
+                del tombstones[host]
+                add_log(f"Container recovered for {host}, cleared tombstone")
+
+        for host, ts in plan.tombstones_to_set.items():
+            if host not in tombstones:
+                tombstones[host] = ts
+                add_log(f"⏳ Tombstoned {host} against flapping (grace period: {int(grace_period)}s)")
+
+        # Stage 3: Execution Guardrails & Cloudflare Mutations
+        if dry_run:
+            add_log(
+                f"[DRY-RUN] ChangePlan {plan.plan_id} evaluated ({plan.summary.total_services_discovered} origins, "
+                f"{plan.summary.dns_creates} creates, {plan.summary.dns_updates} updates, "
+                f"{plan.summary.dns_deletes} deletes, {plan.summary.dns_protected} protected). "
+                "Dry-run active: skipping Cloudflare API updates."
+            )
+        else:
+            total_deletions = plan.summary.ingress_deletes + plan.summary.dns_deletes
+            if max_deletions is not None and total_deletions > max_deletions:
+                err_msg = (
+                    f"BLAST RADIUS GUARD: ChangePlan {plan.plan_id} requested {total_deletions} deletions "
+                    f"exceeding configured MAX_DELETIONS_PER_RUN ({max_deletions}). Aborting mutations."
+                )
+                add_log(f"❌ {err_msg}")
+                raise BlastRadiusExceededError(err_msg)
+
+            # Ingress Configuration Mutation (Idempotent against _last_ingress)
+            if sync_state.get("_last_ingress") != plan.final_ingress_rules:
+                cf_api(
+                    f"/accounts/{account_id}/cfd_tunnel/{tunnel_id}/configurations",
+                    token,
+                    method="PUT",
+                    data={"config": {"ingress": plan.final_ingress_rules}},
+                )
+                sync_state["_last_ingress"] = plan.final_ingress_rules
+                add_log("✅ Updated Cloudflare Tunnel Ingress rules")
+
+            # DNS Mutations
+            for change in plan.dns_changes:
+                if change.action == DnsActionType.CREATE:
+                    payload = {
+                        "type": change.record_type,
+                        "name": change.hostname,
+                        "content": change.target_content,
+                        "proxied": change.proxied,
+                        "ttl": change.ttl,
+                    }
+                    if change.target_comment:
+                        payload["comment"] = change.target_comment
+                    cf_api(f"/zones/{zone_id}/dns_records", token, method="POST", data=payload)
+                    add_log(f"➕ Created DNS record for {change.hostname}")
+
+                elif change.action == DnsActionType.UPDATE:
+                    payload = {
+                        "type": change.record_type,
+                        "name": change.hostname,
+                        "content": change.target_content,
+                        "proxied": change.proxied,
+                        "ttl": change.ttl,
+                    }
+                    if change.target_comment:
+                        payload["comment"] = change.target_comment
+                    cf_api(
+                        f"/zones/{zone_id}/dns_records/{change.record_id}",
+                        token,
+                        method="PUT",
+                        data=payload,
+                    )
+                    add_log(f"🔄 Updated DNS record for {change.hostname}")
+
+                elif change.action == DnsActionType.DELETE:
+                    cf_api(
+                        f"/zones/{zone_id}/dns_records/{change.record_id}",
+                        token,
+                        method="DELETE",
+                    )
+                    if "expired" in change.reason or "grace period" in change.reason:
+                        add_log(f"🗑️ Deleted obsolete DNS record for {change.hostname} after grace period expired")
                     else:
-                        elapsed = now - tombstones[rec_name]
-                        if elapsed >= grace_period:
-                            cf_api(f"/zones/{zone_id}/dns_records/{rec_id}", token, method="DELETE")
-                            del tombstones[rec_name]
-                            add_log(f"🗑️ Deleted obsolete DNS record for {rec_name} after grace period expired")
-                        else:
-                            remaining = int(grace_period - elapsed)
-                            add_log(f"⏳ DNS record for {rec_name} preserved in tombstone ({remaining}s remaining)")
-                            synced_dns.append(
-                                {
-                                    "hostname": rec_name,
-                                    "target": target_cname,
-                                    "service": "tombstoned",
-                                    "proxied": True,
-                                    "tombstone_remaining": remaining,
-                                }
-                            )
+                        add_log(f"🗑️ Deleted obsolete DNS record for {change.hostname}")
+
+                elif change.action == DnsActionType.PROTECT:
+                    add_log(f"🛡️ Protected DNS record for {change.hostname} ({change.reason})")
+
+        # Reconstruct synced_dns for UI & status dashboard
+        synced_dns = []
+        for s in services:
+            norm_h = normalize_hostname(s.get("hostname"))
+            if norm_h:
+                synced_dns.append(
+                    {
+                        "hostname": norm_h,
+                        "target": target_cname,
+                        "service": s.get("service", "unknown"),
+                        "proxied": True,
+                    }
+                )
+        for rec_name, ts in list(tombstones.items()):
+            remaining = max(1, int(grace_period - (now - ts)))
+            add_log(f"⏳ DNS record for {rec_name} preserved in tombstone ({remaining}s remaining)")
+            synced_dns.append(
+                {
+                    "hostname": rec_name,
+                    "target": target_cname,
+                    "service": "tombstoned",
+                    "proxied": True,
+                    "tombstone_remaining": remaining,
+                }
+            )
 
         sync_state["dns_records"] = synced_dns
         sync_state["status"] = "Active / Synced"
@@ -1390,6 +1499,42 @@ def sanitize_sync_state(data: Any) -> Any:
         items = list(data)
         return [sanitize_sync_state(x) for x in items]
     return data
+
+
+@app.get("/api/sync/preview")
+@app.get("/api/v1/sync/preview")
+def api_sync_preview(authenticated: bool = Depends(check_dashboard_auth)):
+    plan_data = sync_state.get("last_change_plan")
+    if plan_data:
+        return JSONResponse({"status": "cached", "plan": plan_data})
+
+    tunnel_name = os.getenv("CLOUDFLARE_TUNNEL_NAME", "cf-docker-tunnel-sync").strip()
+    zone_id = os.getenv("CLOUDFLARE_ZONE_ID") or "preview-zone-id"
+    tunnel_id = sync_state.get("tunnel_id") or "preview-tunnel-id"
+
+    services, all_containers = get_docker_containers()
+    snapshot = build_discovery_snapshot(
+        services=services,
+        all_containers=all_containers,
+        docker_ok=sync_state.get("docker_connected", True),
+        timestamp=time.time(),
+    )
+    remote = RemoteState(
+        tunnel_id=tunnel_id,
+        tunnel_name=tunnel_name,
+        zone_id=zone_id,
+        tunnel_target=f"{tunnel_id}.cfargotunnel.com",
+        existing_ingress_rules=[],
+        existing_dns_records=[],
+    )
+    plan = compute_change_plan(
+        snapshot=snapshot,
+        remote=remote,
+        tombstones=sync_state.get("tombstones", {}),
+        now=time.time(),
+        dry_run=True,
+    )
+    return JSONResponse({"status": "computed", "plan": plan.model_dump()})
 
 
 @app.get("/api/status")
