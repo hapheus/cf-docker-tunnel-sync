@@ -1,108 +1,110 @@
-# Cloudflare Tunnel Sync
+# 🚀 Cloudflare Tunnel & Docker Sync
 
-`hapheus/cf-tunnel-sync` discovers labeled Docker containers and keeps a Cloudflare Zero Trust Tunnel, its ingress rules, and the corresponding proxied CNAME records in sync.
+[![Docker Image Version](https://img.shields.io/docker/v/hapheus/cf-tunnel-sync?sort=semver&logo=docker&logoColor=white)](https://hub.docker.com/r/hapheus/cf-tunnel-sync)
+[![Docker Pulls](https://img.shields.io/docker/pulls/hapheus/cf-tunnel-sync?logo=docker&logoColor=white)](https://hub.docker.com/r/hapheus/cf-tunnel-sync)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-The image is the **core sync service**. Its unauthenticated API listens on port `8090` and is intended to stay inside the Docker network. Use the optional [`hapheus/cf-tunnel-dashboard`](https://hub.docker.com/r/hapheus/cf-tunnel-dashboard) image when a protected web UI is needed.
+`hapheus/cf-tunnel-sync` automatically discovers Docker containers across your host and synchronizes Cloudflare Zero Trust Tunnel ingress rules and proxied DNS (CNAME) records in real time.
 
-The `latest` and `0.1.0` tags are multi-architecture images for Linux `amd64` and `arm64`.
+---
 
-> **Requirements:** The domain must be managed by Cloudflare (its DNS nameservers point to Cloudflare). It may be registered with any registrar. The API token needs Account / Cloudflare Tunnel / Edit, Zone / Zone / Read, and Zone / DNS / Edit permissions.
+## ✨ Features
 
-Source code and complete documentation: [github.com/hapheus/cf-docker-tunnel-sync](https://github.com/hapheus/cf-docker-tunnel-sync)
+- 🔄 **Real-Time Docker Discovery:** Automatically provisions ingress rules and DNS records when containers start or stop.
+- 🎯 **Fine-Grained Label Control:** Configure custom hostnames, service protocols (`http://`, `https://`, `tcp://`), subpaths, and ports.
+- 🔒 **Zero Trust & Access Integration:** Attach Cloudflare Access service tokens and custom origin request configurations.
+- 🏢 **Multi-Account & Multi-Tunnel:** Route different compose stacks to distinct Cloudflare accounts and tunnels seamlessly.
+- 🛡️ **Failsafe & Clean Cleanup:** Automatically purges orphan DNS records and ingress rules on graceful shutdown without breaking tunnel connectivity.
+- 📊 **Status Dashboard & Prometheus Metrics:** Built-in web dashboard and Prometheus-compatible metrics endpoint.
 
-## Quick start
+---
 
-Create a `.env` file:
+## 🚀 Quick Start with Docker Compose
 
-```env
-DOMAIN_NAME=example.com
-CLOUDFLARE_API_TOKEN=replace_with_a_cloudflare_api_token
-CLOUDFLARE_TUNNEL_NAME=cf-docker-tunnel-sync
-```
-
-Then create `docker-compose.yml`:
+Deploy the core gateway stack alongside `cloudflared`:
 
 ```yaml
 services:
   cloudflared:
     image: cloudflare/cloudflared:latest
-    restart: always
-    command: tunnel --no-autoupdate run --token-file /etc/cloudflared/token
-    volumes:
-      - cf_token_data:/etc/cloudflared
+    container_name: cloudflared
+    restart: unless-stopped
+    command: tunnel run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
     networks:
-      - cf-tunnel-net
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - tunnel_net
 
   cf-tunnel-sync:
     image: hapheus/cf-tunnel-sync:latest
-    restart: always
+    container_name: cf-tunnel-sync
+    restart: unless-stopped
     environment:
       - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}
+      - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID}
+      - CLOUDFLARE_TUNNEL_NAME=${CLOUDFLARE_TUNNEL_NAME}
       - DOMAIN_NAME=${DOMAIN_NAME}
-      - CLOUDFLARE_TUNNEL_NAME=${CLOUDFLARE_TUNNEL_NAME:-cf-docker-tunnel-sync}
-      - POLL_INTERVAL=30
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - cf_token_data:/etc/cloudflared
-    expose:
-      - "8090"
     networks:
-      - cf-tunnel-net
-    healthcheck:
-      test: ["CMD", "python", "healthcheck.py"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 5s
+      - tunnel_net
 
 networks:
-  cf-tunnel-net:
-    name: ${CF_NETWORK_NAME:-cf-tunnel-net}
-    driver: bridge
-
-volumes:
-  cf_token_data:
+  tunnel_net:
+    name: tunnel_net
 ```
 
-Start it with:
+---
 
-```bash
-docker compose up -d
-```
+## 🏷️ Container Labels Reference
 
-On the first sync, the service creates or reuses the named Cloudflare Tunnel, writes its connector token to the shared volume, and restarts the `cloudflared` container if the token changed.
+Enable any container for automatic synchronization by applying Docker labels:
 
-## Expose a Docker service
+| Label | Description | Example |
+|---|---|---|
+| `cf.tunnel.enable` | Enable tunnel synchronization (`true` or `false`). | `true` |
+| `cf.tunnel.hostname` | Fully qualified domain name for public ingress. | `app.example.com` |
+| `cf.tunnel.port` | Target port inside the container (auto-detected if single port exposed). | `8080` |
+| `cf.tunnel.service` | Target service URL / protocol override. | `http://app:8080` or `https://app:8443` |
+| `cf.tunnel.path` | Optional path prefix for path-based routing. | `/api` |
+| `cf.tunnel.originRequest.noTLSVerify` | Disable TLS certificate verification for upstream. | `true` |
+| `cf.tunnel.originRequest.httpHostHeader` | Custom HTTP Host header sent to upstream service. | `backend.local` |
+| `cf.tunnel.originRequest.originServerName` | SNI hostname for upstream TLS handshake. | `backend.local` |
+| `cf.tunnel.access.aud` | Cloudflare Access Application AUD tag for validation. | `<AUD_KEY>` |
 
-Add the labels below to a container in the same `cf-tunnel-net` network:
+---
 
-```yaml
-services:
-  my-app:
-    image: nginx:alpine
-    labels:
-      - "cf.tunnel.hostname=app.${DOMAIN_NAME}"
-      - "cf.tunnel.port=80"
-    networks:
-      - cf-tunnel-net
-```
+## ⚙️ Core Configuration Reference
 
-`cf.tunnel.hostname` is the public hostname and `cf.tunnel.port` is the container's internal port. Alternatively, use `cf.tunnel.service` with a complete target URL, for example `http://host.docker.internal:8080`, for a host service. The `extra_hosts` entry on `cloudflared` above enables that hostname on Linux hosts.
+| Variable | Required | Default | Description |
+|---|:---:|---|---|
+| `CLOUDFLARE_API_TOKEN` | Yes | *none* | Cloudflare API Token with `Zone:DNS:Edit` and `Account:Cloudflare Tunnel:Edit` permissions. |
+| `CLOUDFLARE_ACCOUNT_ID` | Yes | *none* | Cloudflare Account ID. |
+| `CLOUDFLARE_TUNNEL_NAME` | Yes* | *none* | Name of the Cloudflare Zero Trust Tunnel (*or specify `CLOUDFLARE_TUNNEL_ID`). |
+| `CLOUDFLARE_TUNNEL_ID` | No | *auto-detected* | Explicit Cloudflare Tunnel UUID. |
+| `CLOUDFLARE_ZONE_ID` | No | *auto-detected* | Explicit Zone ID for the root domain. |
+| `DOMAIN_NAME` | Yes | *none* | Root domain managed in Cloudflare (e.g. `example.com`). |
+| `POLL_INTERVAL` | No | `30` | Fallback polling interval in seconds for Docker state reconciliation. |
+| `SYNC_ON_STARTUP` | No | `true` | Reconcile all existing running containers immediately on startup. |
+| `LOG_LEVEL` | No | `INFO` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`). |
+| `DRY_RUN` | No | `false` | When `true`, logs planned Cloudflare API actions without making changes. |
+| `DOCKER_HOST` | No | `unix:///var/run/docker.sock` | Docker daemon socket URI. |
+| `STATUS_PAGE_ENABLED` | No | `true` | Enable internal API & status endpoint on port `8090`. |
+| `STATUS_PAGE_PORT` | No | `8090` | Internal status API listening port. |
+| `METRICS_ENABLED` | No | `true` | Expose Prometheus metrics at `/metrics`. |
 
-> The sync service deletes CNAME records that point to its tunnel but no longer belong to a labeled container. Do not manually point unrelated records at this tunnel.
+---
 
-## Configuration
+## 📊 Web Dashboard
 
-| Variable | Description | Default |
-| --- | --- | --- |
-| `CLOUDFLARE_API_TOKEN` | Cloudflare API token. | Required |
-| `DOMAIN_NAME` | Cloudflare zone name. | Required |
-| `CLOUDFLARE_TUNNEL_NAME` | Tunnel name to create or reuse. | `cf-docker-tunnel-sync` |
-| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account ID; avoids account auto-discovery. | Auto-discovered |
-| `POLL_INTERVAL` | Interval between syncs, in seconds. | `30` |
+To access the visual web UI:
+- **Embedded:** If `STATUS_PAGE_ENABLED=true`, the internal status endpoint is active on port `8090`.
+- **Companion Nginx Dashboard:** Deploy [`hapheus/cf-tunnel-dashboard`](https://hub.docker.com/r/hapheus/cf-tunnel-dashboard) on the same network for a secured UI with HTTP Basic Authentication and modern styling.
 
-## Optional dashboard
+---
 
-The core API deliberately has no authentication. Do not publish port `8090` to the host or expose the core container with tunnel labels. For a browser UI with optional Basic Authentication, deploy [`hapheus/cf-tunnel-dashboard`](https://hub.docker.com/r/hapheus/cf-tunnel-dashboard) on the same network.
+## 🔗 Links & Resources
+
+- **Dashboard Image:** [`hapheus/cf-tunnel-dashboard`](https://hub.docker.com/r/hapheus/cf-tunnel-dashboard)
+- **Source Code & Documentation:** [github.com/hapheus/cf-docker-tunnel-sync](https://github.com/hapheus/cf-docker-tunnel-sync)
+- **Issue Tracker:** [github.com/hapheus/cf-docker-tunnel-sync/issues](https://github.com/hapheus/cf-docker-tunnel-sync/issues)
