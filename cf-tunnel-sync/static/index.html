@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en" class="dark">
 <head>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'self';">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cloudflare Tunnel & Docker Sync</title>
@@ -114,6 +115,40 @@
     </div>
 
     <script>
+        function escapeHtml(str) {
+            if (str === null || str === undefined) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        function sanitizeUrl(url) {
+            if (!url || typeof url !== 'string') return '#';
+            const trimmed = url.trim();
+            if (/^(?:javascript|data|vbscript|file):/i.test(trimmed)) {
+                return '#';
+            }
+            let candidate = trimmed;
+            if (!/^https?:\/\//i.test(candidate)) {
+                if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(candidate)) {
+                    return '#';
+                }
+                candidate = 'https://' + candidate;
+            }
+            try {
+                const parsed = new URL(candidate);
+                if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+                    return parsed.href;
+                }
+            } catch (e) {
+                return '#';
+            }
+            return '#';
+        }
+
         async function fetchStatus() {
             try {
                 const res = await fetch('/api/status');
@@ -123,61 +158,161 @@
                 }
                 const data = await res.json();
 
-                document.getElementById('status-badge').innerText = data.status;
-                if (data.status.includes('Active') || data.status.includes('Synced')) {
-                    document.getElementById('status-badge').className = 'px-3 py-1 text-xs font-semibold rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
-                } else if (data.status.includes('Error')) {
-                    document.getElementById('status-badge').className = 'px-3 py-1 text-xs font-semibold rounded-full bg-rose-500/20 text-rose-400 border border-rose-500/30';
-                } else {
-                    document.getElementById('status-badge').className = 'px-3 py-1 text-xs font-semibold rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30';
+                const statusBadge = document.getElementById('status-badge');
+                if (statusBadge) {
+                    statusBadge.textContent = data.status || 'Initializing...';
+                    if (data.status && (data.status.includes('Active') || data.status.includes('Synced'))) {
+                        statusBadge.className = 'px-3 py-1 text-xs font-semibold rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
+                    } else if (data.status && data.status.includes('Error')) {
+                        statusBadge.className = 'px-3 py-1 text-xs font-semibold rounded-full bg-rose-500/20 text-rose-400 border border-rose-500/30';
+                    } else {
+                        statusBadge.className = 'px-3 py-1 text-xs font-semibold rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30';
+                    }
                 }
 
-                document.getElementById('tunnel-name').innerText = data.tunnel_name || '-';
-                document.getElementById('tunnel-id').innerText = data.tunnel_id ? `ID: ${data.tunnel_id.substring(0, 18)}...` : 'ID: -';
-                document.getElementById('domain-name').innerText = data.domain_name || '-';
-                document.getElementById('last-sync').innerText = data.last_sync || 'Never';
+                const elTunnelName = document.getElementById('tunnel-name');
+                if (elTunnelName) elTunnelName.textContent = data.tunnel_name || '-';
+
+                const elTunnelId = document.getElementById('tunnel-id');
+                if (elTunnelId) elTunnelId.textContent = data.tunnel_id ? "ID: " + data.tunnel_id.substring(0, 18) + "..." : 'ID: -';
+
+                const elDomainName = document.getElementById('domain-name');
+                if (elDomainName) elDomainName.textContent = data.domain_name || '-';
+
+                const elLastSync = document.getElementById('last-sync');
+                if (elLastSync) elLastSync.textContent = data.last_sync || 'Never';
 
                 const tbody = document.getElementById('hosts-tbody');
-                if (data.all_containers && data.all_containers.length > 0) {
-                    tbody.innerHTML = data.all_containers.map(c => {
-                        let statusBadge = '';
-                        if (c.state === 'running') {
-                            statusBadge = `<span class="px-2 py-0.5 text-xs rounded bg-emerald-950 text-emerald-400 border border-emerald-800">Running</span>`;
-                        } else {
-                            statusBadge = `<span class="px-2 py-0.5 text-xs rounded bg-rose-950 text-rose-400 border border-rose-800">${c.state}</span>`;
-                        }
+                if (tbody) {
+                    while (tbody.firstChild) {
+                        tbody.removeChild(tbody.firstChild);
+                    }
 
-                        let tunnelInfo = '<span class="text-slate-600 font-sans text-xs italic">-</span>';
-                        let dnsInfo = '<span class="text-slate-600 font-sans text-xs italic">-</span>';
+                    if (data.all_containers && data.all_containers.length > 0) {
+                        data.all_containers.forEach(c => {
+                            const tr = document.createElement('tr');
+                            tr.className = 'hover:bg-slate-800/50';
 
-                        if (c.is_tunneled) {
-                            tunnelInfo = `<a href="https://${c.hostname}" target="_blank" class="text-orange-400 hover:underline flex items-center gap-1.5 font-semibold">
-                                ${c.hostname}
-                                <svg class="w-3.5 h-3.5 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
-                            </a>`;
-                            dnsInfo = `<span class="text-emerald-400 font-semibold">Active & Synced</span>`;
-                        } else if (c.hostname !== '-') {
-                            tunnelInfo = `<span class="text-slate-500 line-through">${c.hostname}</span>`;
-                            dnsInfo = `<span class="text-slate-500 font-sans italic text-xs">Stopped (Inactive)</span>`;
-                        }
+                            // Container Name
+                            const tdName = document.createElement('td');
+                            tdName.className = 'px-4 py-3 font-sans font-medium text-slate-200';
+                            tdName.textContent = c.name != null ? c.name : '-';
+                            tr.appendChild(tdName);
 
-                        return `
-                            <tr class="hover:bg-slate-800/50">
-                                <td class="px-4 py-3 font-sans font-medium text-slate-200">${c.name}</td>
-                                <td class="px-4 py-3 text-slate-400 text-xs">${c.image}</td>
-                                <td class="px-4 py-3">${statusBadge}</td>
-                                <td class="px-4 py-3">${tunnelInfo}</td>
-                                <td class="px-4 py-3">${dnsInfo}</td>
-                            </tr>
-                        `;
-                    }).join('');
-                } else {
-                    tbody.innerHTML = '<tr><td colspan="5" class="px-4 py-6 text-center text-slate-500 font-sans">No containers found.</td></tr>';
+                            // Container Image
+                            const tdImage = document.createElement('td');
+                            tdImage.className = 'px-4 py-3 text-slate-400 text-xs';
+                            tdImage.textContent = c.image != null ? c.image : '-';
+                            tr.appendChild(tdImage);
+
+                            // Container Status
+                            const tdStatus = document.createElement('td');
+                            tdStatus.className = 'px-4 py-3';
+                            const badgeSpan = document.createElement('span');
+                            if (c.state === 'running') {
+                                badgeSpan.className = 'px-2 py-0.5 text-xs rounded bg-emerald-950 text-emerald-400 border border-emerald-800';
+                                badgeSpan.textContent = 'Running';
+                            } else {
+                                badgeSpan.className = 'px-2 py-0.5 text-xs rounded bg-rose-950 text-rose-400 border border-rose-800';
+                                badgeSpan.textContent = c.state || 'Unknown';
+                            }
+                            tdStatus.appendChild(badgeSpan);
+                            tr.appendChild(tdStatus);
+
+                            // Tunnel Hostname
+                            const tdTunnel = document.createElement('td');
+                            tdTunnel.className = 'px-4 py-3 font-mono text-xs';
+
+                            // DNS Status
+                            const tdDns = document.createElement('td');
+                            tdDns.className = 'px-4 py-3';
+
+                            const rawHost = c.hostname && c.hostname !== '-' ? String(c.hostname).trim() : null;
+
+                            if (c.is_tunneled && rawHost) {
+                                const safeUrl = sanitizeUrl(rawHost);
+                                if (safeUrl !== '#') {
+                                    const link = document.createElement('a');
+                                    link.href = safeUrl;
+                                    link.target = '_blank';
+                                    link.rel = 'noopener noreferrer';
+                                    link.className = 'text-orange-400 hover:underline flex items-center gap-1.5 font-semibold';
+                                    link.textContent = rawHost;
+
+                                    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                                    svg.setAttribute('class', 'w-3.5 h-3.5 opacity-60');
+                                    svg.setAttribute('fill', 'none');
+                                    svg.setAttribute('stroke', 'currentColor');
+                                    svg.setAttribute('viewBox', '0 0 24 24');
+                                    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                                    path.setAttribute('stroke-linecap', 'round');
+                                    path.setAttribute('stroke-linejoin', 'round');
+                                    path.setAttribute('stroke-width', '2');
+                                    path.setAttribute('d', 'M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14');
+                                    svg.appendChild(path);
+                                    link.appendChild(svg);
+
+                                    tdTunnel.appendChild(link);
+                                } else {
+                                    const blockedSpan = document.createElement('span');
+                                    blockedSpan.className = 'text-amber-400 font-mono';
+                                    blockedSpan.textContent = rawHost;
+                                    tdTunnel.appendChild(blockedSpan);
+                                }
+
+                                const dnsSpan = document.createElement('span');
+                                dnsSpan.className = 'text-emerald-400 font-semibold';
+                                dnsSpan.textContent = 'Active & Synced';
+                                tdDns.appendChild(dnsSpan);
+                            } else if (rawHost) {
+                                const inactiveSpan = document.createElement('span');
+                                inactiveSpan.className = 'text-slate-500 line-through';
+                                inactiveSpan.textContent = rawHost;
+                                tdTunnel.appendChild(inactiveSpan);
+
+                                const dnsSpan = document.createElement('span');
+                                dnsSpan.className = 'text-slate-500 font-sans italic text-xs';
+                                dnsSpan.textContent = 'Stopped (Inactive)';
+                                tdDns.appendChild(dnsSpan);
+                            } else {
+                                const emptyTunnel = document.createElement('span');
+                                emptyTunnel.className = 'text-slate-600 font-sans text-xs italic';
+                                emptyTunnel.textContent = '-';
+                                tdTunnel.appendChild(emptyTunnel);
+
+                                const emptyDns = document.createElement('span');
+                                emptyDns.className = 'text-slate-600 font-sans text-xs italic';
+                                emptyDns.textContent = '-';
+                                tdDns.appendChild(emptyDns);
+                            }
+
+                            tr.appendChild(tdTunnel);
+                            tr.appendChild(tdDns);
+                            tbody.appendChild(tr);
+                        });
+                    } else {
+                        const emptyTr = document.createElement('tr');
+                        const emptyTd = document.createElement('td');
+                        emptyTd.colSpan = 5;
+                        emptyTd.className = 'px-4 py-6 text-center text-slate-500 font-sans';
+                        emptyTd.textContent = 'No containers found.';
+                        emptyTr.appendChild(emptyTd);
+                        tbody.appendChild(emptyTr);
+                    }
                 }
 
+                // Logs container - safe DOM construction
                 const logContainer = document.getElementById('logs-container');
-                if (data.logs && data.logs.length > 0) {
-                    logContainer.innerHTML = data.logs.map(log => `<div>${log}</div>`).join('');
+                if (logContainer && data.logs && Array.isArray(data.logs)) {
+                    while (logContainer.firstChild) {
+                        logContainer.removeChild(logContainer.firstChild);
+                    }
+                    data.logs.forEach(log => {
+                        const div = document.createElement('div');
+                        div.textContent = log;
+                        logContainer.appendChild(div);
+                    });
+                    logContainer.scrollTop = logContainer.scrollHeight;
                 }
             } catch (err) {
                 console.error("Fetch status error:", err);

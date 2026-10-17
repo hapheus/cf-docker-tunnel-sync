@@ -1144,11 +1144,26 @@ def check_dashboard_auth(credentials: Optional[HTTPBasicCredentials] = Depends(s
 @app.get("/dashboard", response_class=HTMLResponse)
 def get_dashboard(authenticated: bool = Depends(check_dashboard_auth)):
     static_file = os.path.join(os.path.dirname(__file__), "static", "index.html")
+    headers = {
+        "Content-Security-Policy": (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "font-src 'self' https://fonts.gstatic.com; "
+            "connect-src 'self'; "
+            "img-src 'self' data:; "
+            "object-src 'none'; "
+            "base-uri 'self';"
+        ),
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+    }
     if os.path.exists(static_file):
         with open(static_file, "r", encoding="utf-8") as f:
-            return HTMLResponse(content=f.read())
+            return HTMLResponse(content=f.read(), headers=headers)
     return HTMLResponse(
-        content="<!DOCTYPE html><html><head><title>Cloudflare Tunnel Sync</title></head><body><h1>Cloudflare Tunnel Sync Dashboard</h1><p>Running in single-container mode. Access <a href='/api/status'>/api/status</a> for API data.</p></body></html>"
+        content="<!DOCTYPE html><html><head><title>Cloudflare Tunnel Sync</title></head><body><h1>Cloudflare Tunnel Sync Dashboard</h1><p>Running in single-container mode. Access <a href='/api/status'>/api/status</a> for API data.</p></body></html>",
+        headers=headers,
     )
 
 
