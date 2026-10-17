@@ -48,7 +48,6 @@ def test_readme_screenshots_exist_and_valid():
     repo_root = get_repo_root()
     expected_screenshots = [
         "docs/screenshots/dashboard-preview.png",
-        "docs/screenshots/dashboard-dark.png",
         "docs/screenshots/dashboard-mobile.png",
     ]
 

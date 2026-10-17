@@ -24,7 +24,7 @@ The image is a lightweight Nginx container (~28 MB) configured with reverse-prox
 - 🐳 **Docker Container Inspection:** Visual overview of all discovered containers, ingress rules, hostnames, and target ports.
 - 🛡️ **Built-in Security:** Optional HTTP Basic Authentication (fail-closed if credentials are missing when auth is enabled).
 - 🔒 **Sanitized DOM Sinks:** Strict DOMPurify sanitization preventing stored XSS from untrusted container labels.
-- 🌓 **Modern UI:** Built-in Dark Mode toggle and responsive layout for mobile and desktop screens.
+- 📱 **Modern UI:** Responsive layout optimized for mobile and desktop screens.
 - 🩺 **Health Check Endpoint:** Unauthenticated `/health` endpoint returning `{"status":"healthy"}` for container health monitoring.
 
 ---

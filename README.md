@@ -46,9 +46,9 @@ Automatically sync Docker containers with Cloudflare Tunnels (Zero Trust). Just 
 
 ## 📸 Screenshots & Previews
 
-| Web Dashboard (Status & Health) | Dark Theme & Dynamic Inspection | Mobile Responsive UI |
-|:---:|:---:|:---:|
-| ![Web Dashboard Preview](docs/screenshots/dashboard-preview.png) | ![Dark Mode](docs/screenshots/dashboard-dark.png) | ![Mobile View](docs/screenshots/dashboard-mobile.png) |
+| Web Dashboard (Desktop Overview) | Mobile Responsive UI |
+|:---:|:---:|
+| ![Web Dashboard Preview](docs/screenshots/dashboard-preview.png) | ![Mobile View](docs/screenshots/dashboard-mobile.png) |
 
 > 💡 **Quickstart:** Looking for a fast walkthrough under 10 minutes? Check out the [10-Minute Canonical Quickstart Guide](QUICKSTART.md).  
 > ⚡ **Simplicity First — Headless by Design**: `cf-tunnel-sync` runs primarily as an autonomous background daemon with zero open ports. Visual status monitoring is 100% optional via the companion container [`hapheus/cf-tunnel-dashboard`](https://hub.docker.com/r/hapheus/cf-tunnel-dashboard) or direct port mapping.
@@ -185,7 +185,7 @@ docker compose up -d
    - Safely reconciles ingress rules and DNS CNAME records against the Cloudflare API.
    - Runs with **zero published host ports** by default.
 2. **Web Dashboard Monitoring (100% Optional)**:
-   - **Companion Container (`hapheus/cf-tunnel-dashboard`)**: Dedicated, lightweight web UI powered by Nginx. Provides live visual diagnostics, dark/light theme, mobile layout, and optional HTTP Basic Authentication (`DASHBOARD_AUTH_ENABLED=true`).
+   - **Companion Container (`hapheus/cf-tunnel-dashboard`)**: Dedicated, lightweight web UI powered by Nginx. Provides live visual diagnostics, responsive mobile layout, and optional HTTP Basic Authentication (`DASHBOARD_AUTH_ENABLED=true`).
    - **Direct Port Mapping**: Map `${DASHBOARD_PORT:-8080}:8090` on `cf-tunnel-sync` to access the built-in FastAPI dashboard.
    - **Headless Mode**: Simply remove or comment out the `ports:` mapping. Syncing, safety guardrails, and self-healing operate 100% autonomously in the background.
 
