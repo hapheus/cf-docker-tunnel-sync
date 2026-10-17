@@ -17,8 +17,10 @@ import uvicorn
 from cloudflare import cf_api
 from config import detect_env_typos, validate_tunnel_uuid
 from diagnostics import (
+    PreflightDiagnostic,
     compute_truthful_service_status,
     evaluate_service_stages,
+    mask_sensitive_text,
 )
 from fastapi import Depends, FastAPI, HTTPException, Response, status
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -1869,11 +1871,12 @@ async def api_sync(authenticated: bool = Depends(check_dashboard_auth)):
 
 
 def run_preflight_validation(dry_run: bool = True) -> int:
-    """Non-mutating preflight validation mode (Issue #48).
+    """Non-mutating preflight validation mode (Issue #48, #97).
 
     Guarantees that only read-only queries are executed against Docker and Cloudflare.
     Never calls mutator methods.
-    Returns 0 on valid environment, 1 on error with actionable remedy messages.
+    Returns 0 on valid environment, 1 on error with actionable What/Why/How to fix messages.
+    Zero secrets leaked in terminal logs.
     """
     logger.info("==================================================")
     logger.info("🔍 Starting Non-Mutating Preflight Validation (R01)")
@@ -1881,29 +1884,51 @@ def run_preflight_validation(dry_run: bool = True) -> int:
 
     failed_checks = 0
 
+    def _log_preflight_fail(check: str, what: str, why: str, fix: str, extra: Optional[List[str]] = None) -> None:
+        secrets = list(extra or [])
+        tok = get_token()
+        if tok:
+            secrets.append(tok)
+        diag = PreflightDiagnostic(
+            check_name=check,
+            what_failed=what,
+            why=why,
+            how_to_fix=fix,
+        )
+        for line in diag.format_terminal(extra_secrets=secrets).splitlines():
+            logger.error(line)
+
     # 1. Docker Socket Connectivity & Permissions
     try:
         ver_resp = docker_api("/version")
         if not ver_resp or not isinstance(ver_resp, dict):
-            logger.error("❌ [PREFLIGHT FAIL] Docker daemon returned invalid response.")
-            logger.error("   [REMEDY] Ensure Docker socket is mounted at /var/run/docker.sock with read permissions.")
+            _log_preflight_fail(
+                "Docker Daemon Connectivity",
+                "Docker daemon API returned an invalid or empty response.",
+                "Unable to retrieve system version details from /var/run/docker.sock.",
+                "Ensure Docker socket is mounted at /var/run/docker.sock with read permissions.",
+            )
             failed_checks += 1
         else:
             docker_version = ver_resp.get("Version", "unknown")
             logger.info(f"✅ [PREFLIGHT PASS] Docker daemon connected (Version: {docker_version}).")
     except Exception as e:
-        logger.error(f"❌ [PREFLIGHT FAIL] Cannot connect to Docker socket: {e}")
-        logger.error(
-            "   [REMEDY] Ensure /var/run/docker.sock is mounted into the container (-v /var/run/docker.sock:/var/run/docker.sock:ro)."
+        _log_preflight_fail(
+            "Docker Socket Connectivity",
+            "Cannot connect to Docker daemon socket at /var/run/docker.sock.",
+            f"Docker socket communication failed: {e}",
+            "Ensure /var/run/docker.sock is mounted into the container (-v /var/run/docker.sock:/var/run/docker.sock:ro) and Docker daemon is running.",
         )
         failed_checks += 1
 
     # 2. Cloudflare API Token Validity & Permissions
     token = get_token()
     if not token:
-        logger.error("❌ [PREFLIGHT FAIL] Cloudflare API token is missing.")
-        logger.error(
-            "   [REMEDY] Set CLOUDFLARE_API_TOKEN environment variable with Zone:DNS:Edit and Account:Cloudflare Tunnel:Edit permissions."
+        _log_preflight_fail(
+            "Cloudflare API Token",
+            "Cloudflare API token is missing.",
+            "Neither CLOUDFLARE_API_TOKEN nor CLOUDFLARE_TOKEN environment variable is set.",
+            "Set CLOUDFLARE_API_TOKEN environment variable with Zone:DNS:Edit and Account:Cloudflare Tunnel:Edit permissions.",
         )
         failed_checks += 1
     else:
@@ -1911,34 +1936,45 @@ def run_preflight_validation(dry_run: bool = True) -> int:
             verify_resp = cf_api("/user/tokens/verify", token, method="GET")
             status = verify_resp.get("result", {}).get("status")
             if status != "active":
-                logger.error(f"❌ [PREFLIGHT FAIL] Cloudflare API token verification failed (status: '{status}').")
-                logger.error(
-                    "   [REMEDY] Verify that the token is active and has Zone:DNS:Edit and Account:Cloudflare Tunnel:Edit permissions."
+                _log_preflight_fail(
+                    "Cloudflare API Token Verification",
+                    f"Cloudflare API token verification returned non-active status: '{status}'.",
+                    "The token is not active, may have expired, or is restricted by IP address in Cloudflare.",
+                    "Verify in Cloudflare Dashboard (My Profile > API Tokens) that the token is Active and has Zone:DNS:Edit and Account:Cloudflare Tunnel:Edit permissions.",
                 )
                 failed_checks += 1
             else:
                 logger.info("✅ [PREFLIGHT PASS] Cloudflare API token verified and active.")
         except Exception as e:
-            logger.error(f"❌ [PREFLIGHT FAIL] Cloudflare API token verification failed: {e}")
-            logger.error(
-                "   [REMEDY] Verify network connectivity to api.cloudflare.com and check CLOUDFLARE_API_TOKEN."
+            _log_preflight_fail(
+                "Cloudflare API Token Verification",
+                "Cloudflare API token verification failed.",
+                f"Cloudflare API error during token verification: {e}",
+                "Verify network connectivity to api.cloudflare.com and check CLOUDFLARE_API_TOKEN.",
+                extra=[token],
             )
             failed_checks += 1
 
     # 3. Target Cloudflare Zone and Tunnel ID
     domain = get_domain_name()
     if not domain:
-        logger.error("❌ [PREFLIGHT FAIL] DOMAIN_NAME environment variable is not configured.")
-        logger.error("   [REMEDY] Set DOMAIN_NAME=yourdomain.com in environment or compose file.")
+        _log_preflight_fail(
+            "Domain Configuration",
+            "DOMAIN_NAME environment variable is not configured.",
+            "A target root domain is required to find Cloudflare DNS zones and manage tunnel routes.",
+            "Set DOMAIN_NAME=yourdomain.com in environment or compose file.",
+        )
         failed_checks += 1
     elif token:
         try:
             zones_resp = cf_api(f"/zones?name={domain}", token, method="GET")
             zones = zones_resp.get("result", [])
             if not zones:
-                logger.error(f"❌ [PREFLIGHT FAIL] Zone for domain '{domain}' not found in Cloudflare account.")
-                logger.error(
-                    "   [REMEDY] Verify DOMAIN_NAME matches a zone in your Cloudflare account and token has Zone:Read permission."
+                _log_preflight_fail(
+                    "Cloudflare Zone Resolution",
+                    f"Zone for domain '{domain}' not found in Cloudflare account.",
+                    f"No active DNS zone matching '{domain}' was returned for this account.",
+                    "Verify DOMAIN_NAME matches a zone in your Cloudflare account and token has Zone:Read permission.",
                 )
                 failed_checks += 1
             else:
@@ -1964,8 +2000,12 @@ def run_preflight_validation(dry_run: bool = True) -> int:
                     if tun and not tun.get("deleted_at"):
                         logger.info(f"✅ [PREFLIGHT PASS] Cloudflare Tunnel ID '{tunnel_id}' verified.")
                     else:
-                        logger.error(f"❌ [PREFLIGHT FAIL] Cloudflare Tunnel ID '{tunnel_id}' not found or deleted.")
-                        logger.error("   [REMEDY] Check CLOUDFLARE_TUNNEL_ID or create a new tunnel.")
+                        _log_preflight_fail(
+                            "Cloudflare Tunnel ID Lookup",
+                            f"Cloudflare Tunnel ID '{tunnel_id}' not found or deleted.",
+                            f"Tunnel ID '{tunnel_id}' does not exist in Cloudflare account '{account_id}' or is marked deleted.",
+                            "Check CLOUDFLARE_TUNNEL_ID or create a new tunnel.",
+                        )
                         failed_checks += 1
                 elif account_id:
                     tunnels_resp = cf_api(
@@ -1977,14 +2017,21 @@ def run_preflight_validation(dry_run: bool = True) -> int:
                             f"✅ [PREFLIGHT PASS] Cloudflare Tunnel '{tunnel_name}' found (ID: {tuns[0]['id']})."
                         )
                     else:
-                        logger.error(f"❌ [PREFLIGHT FAIL] Cloudflare Tunnel '{tunnel_name}' does not exist.")
-                        logger.error(
-                            f"   [REMEDY] Create tunnel '{tunnel_name}' in Cloudflare Zero Trust dashboard or run 'cloudflared tunnel create {tunnel_name}'."
+                        _log_preflight_fail(
+                            "Cloudflare Tunnel Lookup",
+                            f"Cloudflare Tunnel '{tunnel_name}' does not exist.",
+                            f"No active tunnel named '{tunnel_name}' was found in Cloudflare account '{account_id}'.",
+                            f"Create tunnel '{tunnel_name}' in Cloudflare Zero Trust dashboard or run 'cloudflared tunnel create {tunnel_name}'.",
                         )
                         failed_checks += 1
         except Exception as e:
-            logger.error(f"❌ [PREFLIGHT FAIL] Failed to verify Zone/Tunnel with Cloudflare API: {e}")
-            logger.error("   [REMEDY] Verify token permissions for Zone:Read and Cloudflare Tunnel:Read.")
+            _log_preflight_fail(
+                "Cloudflare Zone and Tunnel Inspection",
+                "Failed to verify Zone/Tunnel with Cloudflare API.",
+                f"Cloudflare API error during Zone/Tunnel inspection: {e}",
+                "Verify token permissions for Zone:Read and Cloudflare Tunnel:Read.",
+                extra=[token],
+            )
             failed_checks += 1
 
     # 4. Network Inspection & Docker Container Discovery
@@ -1994,7 +2041,8 @@ def run_preflight_validation(dry_run: bool = True) -> int:
             f"✅ [PREFLIGHT PASS] Inspected Docker containers ({len(all_containers)} total containers, {len(services)} tunneled services)."
         )
     except Exception as e:
-        logger.warning(f"⚠️ [PREFLIGHT WARN] Network inspection encountered an issue: {e}")
+        safe_msg = mask_sensitive_text(str(e), [token] if token else None)
+        logger.warning(f"⚠️ [PREFLIGHT WARN] Network inspection encountered an issue: {safe_msg}")
 
     logger.info("==================================================")
     if failed_checks == 0:

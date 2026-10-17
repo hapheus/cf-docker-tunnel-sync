@@ -1,0 +1,40 @@
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: always
+    command: tunnel --no-autoupdate run --token-file /etc/cloudflared/token
+    volumes:
+      - cf_token_data:/etc/cloudflared
+    networks:
+      - cf-tunnel-net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  cf-tunnel-sync:
+    image: hapheus/cf-tunnel-sync:latest
+    restart: always
+    environment:
+      - DOMAIN_NAME=${DOMAIN_NAME}
+      - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}
+      - CLOUDFLARE_TUNNEL_NAME=${CLOUDFLARE_TUNNEL_NAME:-gateway-tunnel}
+      - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-}
+      - POLL_INTERVAL=30
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - cf_token_data:/etc/cloudflared
+    networks:
+      - cf-tunnel-net
+    healthcheck:
+      test: ["CMD", "python", "healthcheck.py"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+networks:
+  cf-tunnel-net:
+    name: ${CF_NETWORK_NAME:-cf-tunnel-net}
+    driver: bridge
+
+volumes:
+  cf_token_data:

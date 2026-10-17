@@ -1,5 +1,6 @@
+import re
 from enum import Enum
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel
 
@@ -158,3 +159,50 @@ def compute_truthful_service_status(stages: Dict[str, Dict[str, str]]) -> str:
         return "Synced"
 
     return "Degraded"
+
+
+def mask_sensitive_text(text: str, extra_secrets: Optional[List[str]] = None) -> str:
+    """Mask tokens, authorization headers, passwords, and sensitive strings from logs.
+
+    Guarantees zero raw secrets are printed.
+    """
+    if not text:
+        return ""
+    masked = str(text)
+
+    # Mask explicit secrets if provided
+    if extra_secrets:
+        for secret in extra_secrets:
+            if secret and len(str(secret).strip()) >= 4:
+                masked = masked.replace(str(secret).strip(), "[MASKED]")
+
+    # Mask Authorization Bearer tokens
+    masked = re.sub(r"(?i)bearer\s+[a-zA-Z0-9_\-\.~]+", "Bearer [MASKED]", masked)
+
+    # Mask sensitive keys
+    masked = re.sub(r"(?i)(token|password|secret|key|authorization|auth)[\s:=]+[^\s,]{8,}", r"\1: [MASKED]", masked)
+
+    # Mask long alphanumeric strings that resemble Cloudflare 40-char API tokens or 32-char hex keys
+    masked = re.sub(r"\b[A-Za-z0-9_-]{38,45}\b", "[MASKED]", masked)
+
+    return masked
+
+
+class PreflightDiagnostic(BaseModel):
+    """Structured preflight onboarding diagnostic check failure."""
+
+    check_name: str
+    what_failed: str
+    why: str
+    how_to_fix: str
+
+    def format_terminal(self, extra_secrets: Optional[List[str]] = None) -> str:
+        what = mask_sensitive_text(self.what_failed, extra_secrets)
+        why = mask_sensitive_text(self.why, extra_secrets)
+        fix = mask_sensitive_text(self.how_to_fix, extra_secrets)
+        return (
+            f"❌ [PREFLIGHT FAIL] {self.check_name}\n"
+            f"   • What failed: {what}\n"
+            f"   • Why:         {why}\n"
+            f"   • How to fix:  {fix}"
+        )
