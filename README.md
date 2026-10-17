@@ -50,9 +50,16 @@ Automatically sync Docker containers with Cloudflare Tunnels (Zero Trust). Just 
 |:---:|:---:|:---:|
 | ![Web Dashboard Preview](docs/screenshots/dashboard-preview.png) | ![Dark Mode](docs/screenshots/dashboard-dark.png) | ![Mobile View](docs/screenshots/dashboard-mobile.png) |
 
+> 💡 **Quickstart:** Looking for a fast walkthrough under 10 minutes? Check out the [10-Minute Canonical Quickstart Guide](QUICKSTART.md).
+
 ---
 
 ## ✨ Features
+
+- 🔍 **Non-Mutating Preflight Mode:** Run `python app.py --preflight` or set `PREFLIGHT_ONLY=true` to validate Docker socket connectivity, token permissions, and tunnel existence without mutating live records.
+- 🔬 **6-Stage Truthful Diagnostics:** Evaluates syntax, domain match, network topology, Cloudflare ingress, DNS, and origin health with zero misleading statuses.
+- 🔮 **Predictive Dry-Run & ChangePlan API:** Audit pending actions before live synchronization via `--dry-run`, `DRY_RUN=true`, or `GET /api/change-plan`.
+- 🛡️ **Blast-Radius Protection:** Automatic deletion budget guard (`MAX_DELETIONS_PER_SYNC=3`) prevents catastrophic route wiping on Docker restart, with explicit override (`ALLOW_MASS_DELETIONS=true`).
 
 - ⚡ **Event-Driven Docker Discovery:** Listens directly to the Docker socket stream (`/events`) for instantaneous synchronization when containers start, stop, or restart.
 - 🎛️ **Coalescing Debouncer:** Buffers rapid container bursts (e.g., `docker compose up` launching multiple services) to prevent Cloudflare API rate-limiting.

@@ -17,6 +17,8 @@ class DiscoveredService(BaseModel):
     container: str
     hostname: str
     service: str
+    status: str = "Pending"
+    stages: Dict[str, Dict[str, str]] = Field(default_factory=dict)
     no_tls_verify: bool = False
     network_connected: bool = True
     network_warning: Optional[str] = None
@@ -33,6 +35,7 @@ class ContainerItem(BaseModel):
     hostname: str = "-"
     is_tunneled: bool = False
     network_connected: bool = True
+    stages: Optional[Dict[str, Dict[str, str]]] = None
 
 
 class DNSRecordItem(BaseModel):
@@ -58,5 +61,8 @@ class SyncStateModel(BaseModel):
     dns_records: List[Dict[str, Any]] = Field(default_factory=list)
     logs: List[str] = Field(default_factory=list)
     docker_connected: bool = True
+    services: List[Dict[str, Any]] = Field(default_factory=list)
     tombstones: Dict[str, float] = Field(default_factory=dict)
     last_change_plan: Optional[Dict[str, Any]] = None
+    safety_guard_tripped: bool = False
+    safety_details: Optional[Dict[str, Any]] = None

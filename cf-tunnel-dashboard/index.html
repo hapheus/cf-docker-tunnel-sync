@@ -260,10 +260,65 @@
                                     tdTunnel.appendChild(blockedSpan);
                                 }
 
+                                const statusWrapper = document.createElement('div');
+                                statusWrapper.className = 'flex flex-col gap-1.5';
+
+                                const headerWrapper = document.createElement('div');
+                                headerWrapper.className = 'flex items-center gap-2';
+
                                 const dnsSpan = document.createElement('span');
-                                dnsSpan.className = 'text-emerald-400 font-semibold';
-                                dnsSpan.textContent = 'Active & Synced';
-                                tdDns.appendChild(dnsSpan);
+                                const svcStatus = c.status || 'Synced';
+                                if (svcStatus === 'Synced') {
+                                    dnsSpan.className = 'text-emerald-400 font-semibold';
+                                    dnsSpan.textContent = 'Active & Synced';
+                                } else if (svcStatus === 'Degraded') {
+                                    dnsSpan.className = 'text-amber-400 font-semibold';
+                                    dnsSpan.textContent = 'Degraded';
+                                } else if (svcStatus === 'Failed') {
+                                    dnsSpan.className = 'text-rose-400 font-semibold';
+                                    dnsSpan.textContent = 'Failed';
+                                } else {
+                                    dnsSpan.className = 'text-sky-400 font-semibold';
+                                    dnsSpan.textContent = svcStatus;
+                                }
+                                headerWrapper.appendChild(dnsSpan);
+                                statusWrapper.appendChild(headerWrapper);
+
+                                if (c.stages && Object.keys(c.stages).length > 0) {
+                                    const stagesDiv = document.createElement('div');
+                                    stagesDiv.className = 'flex items-center gap-1 flex-wrap';
+
+                                    const stageLabels = [
+                                        { key: 'LABEL_SYNTAX', short: 'SYN' },
+                                        { key: 'TUNNEL_DOMAIN_MATCH', short: 'DOM' },
+                                        { key: 'NETWORK_TOPOLOGY', short: 'NET' },
+                                        { key: 'CLOUDFLARE_INGRESS', short: 'ING' },
+                                        { key: 'CLOUDFLARE_DNS', short: 'DNS' },
+                                        { key: 'ORIGIN_HEALTH', short: 'HLT' }
+                                    ];
+
+                                    stageLabels.forEach(s => {
+                                        const stageData = c.stages[s.key] || { status: 'PENDING', message: '' };
+                                        const pill = document.createElement('span');
+                                        pill.className = 'px-1.5 py-0.5 rounded text-[10px] font-mono border ';
+                                        if (stageData.status === 'PASS') {
+                                            pill.className += 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30';
+                                        } else if (stageData.status === 'WARNING') {
+                                            pill.className += 'bg-amber-500/20 text-amber-300 border-amber-500/30';
+                                        } else if (stageData.status === 'FAILED') {
+                                            pill.className += 'bg-rose-500/20 text-rose-300 border-rose-500/30';
+                                        } else {
+                                            pill.className += 'bg-slate-500/20 text-slate-400 border-slate-500/30';
+                                        }
+                                        pill.textContent = s.short;
+                                        pill.title = s.key + ': ' + stageData.status + ' (' + stageData.message + ')';
+                                        stagesDiv.appendChild(pill);
+                                    });
+
+                                    statusWrapper.appendChild(stagesDiv);
+                                }
+
+                                tdDns.appendChild(statusWrapper);
                             } else if (rawHost) {
                                 const inactiveSpan = document.createElement('span');
                                 inactiveSpan.className = 'text-slate-500 line-through';

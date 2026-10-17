@@ -14,8 +14,11 @@
 - 🎯 **Fine-Grained Label Control:** Configure custom hostnames, service protocols (`http://`, `https://`, `tcp://`), subpaths, and ports.
 - 🔒 **Zero Trust & Access Integration:** Attach Cloudflare Access service tokens and custom origin request configurations.
 - 🏢 **Multi-Account & Multi-Tunnel:** Route different compose stacks to distinct Cloudflare accounts and tunnels seamlessly.
-- 🛡️ **Failsafe & Clean Cleanup:** Automatically purges orphan DNS records and ingress rules on graceful shutdown without breaking tunnel connectivity.
-- 📊 **Status Dashboard & Prometheus Metrics:** Built-in web dashboard and Prometheus-compatible metrics endpoint.
+- 🛡️ **Blast-Radius Protection & Deletion Guard:** Automatically prevents bulk route teardown on engine restart with configurable limits (`MAX_DELETIONS_PER_SYNC=3`).
+- 🔍 **Non-Mutating Preflight Validation:** Validate Docker, tokens, and tunnels without mutations via `--preflight` or `PREFLIGHT_ONLY=true`.
+- 🔮 **Predictive Dry-Run & ChangePlan API:** Audit exact route mutations via `--dry-run` and `GET /api/change-plan`.
+- 🔬 **6-Stage Truthful Diagnostics:** Granular health checks ensuring zero false-positive sync reporting.
+- 📊 **Status Dashboard & Web UI:** Built-in dashboard with real-time stage status indicators.
 
 ---
 

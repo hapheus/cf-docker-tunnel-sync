@@ -154,6 +154,7 @@ class ChangePlanSummary(BaseModel):
     dns_updates: int = 0
     dns_deletes: int = 0
     dns_protected: int = 0
+    unmanaged_skipped: int = 0
     has_mutations: bool = False
     is_destructive: bool = False
 
@@ -165,12 +166,64 @@ class ChangePlan(BaseModel):
     timestamp: float
     tunnel_id: str
     zone_id: str
+    dry_run: bool = False
     ingress_changes: List[PlannedIngressChange] = Field(default_factory=list)
     dns_changes: List[PlannedDnsChange] = Field(default_factory=list)
     final_ingress_rules: List[Dict[str, Any]] = Field(default_factory=list)
     tombstones_to_set: Dict[str, float] = Field(default_factory=dict)
     tombstones_to_clear: List[str] = Field(default_factory=list)
     summary: ChangePlanSummary
+
+    def to_api_dict(self) -> Dict[str, Any]:
+        """Returns JSON schema representation of the ChangePlan for the /api/change-plan endpoint."""
+        actions: List[Dict[str, Any]] = []
+
+        for ing in self.ingress_changes:
+            actions.append(
+                {
+                    "action": ing.action.value.upper(),
+                    "resource": "INGRESS",
+                    "target": {
+                        "hostname": ing.hostname,
+                        "service": ing.service,
+                        "path": ing.path,
+                        "origin_request": ing.origin_request,
+                    },
+                    "reason": ing.reason,
+                }
+            )
+
+        for dns in self.dns_changes:
+            actions.append(
+                {
+                    "action": dns.action.value.upper(),
+                    "resource": "DNS",
+                    "target": {
+                        "hostname": dns.hostname,
+                        "record_id": dns.record_id,
+                        "record_type": dns.record_type,
+                        "current_content": dns.current_content,
+                        "target_content": dns.target_content,
+                        "proxied": dns.proxied,
+                        "ttl": dns.ttl,
+                    },
+                    "reason": dns.reason,
+                }
+            )
+
+        unmanaged = getattr(self.summary, "unmanaged_skipped", 0) or self.summary.dns_protected
+        return {
+            "plan_id": self.plan_id,
+            "dry_run": self.dry_run,
+            "timestamp": self.timestamp,
+            "actions": actions,
+            "summary": {
+                "additions": self.summary.ingress_creates + self.summary.dns_creates,
+                "updates": self.summary.ingress_updates + self.summary.dns_updates,
+                "deletions": self.summary.ingress_deletes + self.summary.dns_deletes,
+                "unmanaged_skipped": unmanaged,
+            },
+        }
 
 
 def build_discovery_snapshot(
@@ -668,6 +721,13 @@ def compute_change_plan(
     has_mutations = (ing_creates + ing_updates + ing_deletes + dns_creates + dns_updates + dns_deletes) > 0
     is_destructive = (ing_deletes + dns_deletes) > 0
 
+    unmanaged_skipped = sum(
+        1
+        for c in dns_changes
+        if c.action == DnsActionType.PROTECT
+        or c.ownership_status in (OwnershipStatus.UNMANAGED, OwnershipStatus.FOREIGN_TUNNEL)
+    )
+
     summary = ChangePlanSummary(
         total_services_discovered=len(snapshot.origins),
         ingress_creates=ing_creates,
@@ -677,6 +737,7 @@ def compute_change_plan(
         dns_updates=dns_updates,
         dns_deletes=dns_deletes,
         dns_protected=dns_protected,
+        unmanaged_skipped=unmanaged_skipped,
         has_mutations=has_mutations,
         is_destructive=is_destructive,
     )
@@ -686,6 +747,7 @@ def compute_change_plan(
         timestamp=current_time,
         tunnel_id=remote.tunnel_id,
         zone_id=remote.zone_id,
+        dry_run=dry_run,
         ingress_changes=ingress_changes,
         dns_changes=dns_changes,
         final_ingress_rules=final_ingress_rules,
@@ -702,6 +764,8 @@ def execute_change_plan(
     cf_api_fn: Callable[..., Any],
     dry_run: bool = False,
     max_deletions: Optional[int] = None,
+    max_deletion_ratio: Optional[float] = None,
+    allow_mass_deletions: bool = False,
     log_fn: Optional[Callable[[str], None]] = None,
 ) -> Dict[str, Any]:
     """Applies mutations specified in ChangePlan with guardrails against accidental blast-radius."""
@@ -712,7 +776,28 @@ def execute_change_plan(
         else:
             logger.info(msg)
 
-    if dry_run:
+    # Log diff markers for planned ingress changes
+    for ing in plan.ingress_changes:
+        if ing.action == IngressActionType.CREATE:
+            _log(f"+ [INGRESS CREATE] {ing.hostname} -> {ing.service}")
+        elif ing.action == IngressActionType.UPDATE:
+            _log(f"~ [INGRESS UPDATE] {ing.hostname} -> {ing.service}")
+        elif ing.action == IngressActionType.DELETE:
+            _log(f"- [INGRESS DELETE] {ing.hostname}")
+
+    # Log diff markers for planned DNS changes
+    for dns in plan.dns_changes:
+        if dns.action == DnsActionType.CREATE:
+            _log(f"+ [DNS CREATE] {dns.hostname} -> {dns.target_content}")
+        elif dns.action == DnsActionType.UPDATE:
+            _log(f"~ [DNS UPDATE] {dns.hostname} -> {dns.target_content}")
+        elif dns.action == DnsActionType.DELETE:
+            _log(f"- [DNS DELETE] {dns.hostname}")
+        elif dns.action == DnsActionType.PROTECT:
+            _log(f"🛡️ [DNS PROTECT] {dns.hostname} ({dns.reason})")
+
+    is_dry = dry_run or plan.dry_run
+    if is_dry:
         _log(
             f"[DRY-RUN] ChangePlan {plan.plan_id} evaluated ({plan.summary.total_services_discovered} origins, "
             f"{plan.summary.dns_creates} creates, {plan.summary.dns_updates} updates, "
@@ -722,13 +807,36 @@ def execute_change_plan(
         return {"executed": False, "dry_run": True, "plan_id": plan.plan_id}
 
     total_deletions = plan.summary.ingress_deletes + plan.summary.dns_deletes
-    if max_deletions is not None and total_deletions > max_deletions:
-        err_msg = (
-            f"BLAST RADIUS GUARD: ChangePlan {plan.plan_id} requested {total_deletions} deletions "
-            f"exceeding configured MAX_DELETIONS_PER_RUN ({max_deletions}). Aborting mutations."
-        )
-        _log(f"❌ {err_msg}")
-        raise BlastRadiusExceededError(err_msg)
+    route_deletions = max(plan.summary.ingress_deletes, plan.summary.dns_deletes)
+    planned_deletions = route_deletions if route_deletions > 0 else total_deletions
+
+    if allow_mass_deletions:
+        if planned_deletions > 0:
+            _log(
+                f"[SAFETY_GUARD] Mass deletion override active (ALLOW_MASS_DELETIONS=true). "
+                f"Proceeding with {planned_deletions} planned deletions."
+            )
+    else:
+        effective_limit = max_deletions if max_deletions is not None else 3
+        if planned_deletions > effective_limit:
+            err_msg = (
+                f"[SAFETY_GUARD] BLAST RADIUS GUARD: Mass deletion threshold exceeded "
+                f"(planned: {planned_deletions}, limit: {effective_limit}). Sync aborted."
+            )
+            _log(f"❌ {err_msg}")
+            raise BlastRadiusExceededError(err_msg)
+
+        if max_deletion_ratio is not None and max_deletion_ratio > 0:
+            total_routes = plan.summary.total_services_discovered + planned_deletions
+            if total_routes > 0:
+                ratio = planned_deletions / float(total_routes)
+                if ratio > max_deletion_ratio:
+                    err_msg = (
+                        f"[SAFETY_GUARD] BLAST RADIUS GUARD: Mass deletion ratio exceeded "
+                        f"(planned ratio: {ratio:.2f}, limit: {max_deletion_ratio:.2f}). Sync aborted."
+                    )
+                    _log(f"❌ {err_msg}")
+                    raise BlastRadiusExceededError(err_msg)
 
     # 1. Ingress Configuration Update
     ingress_mutations = plan.summary.ingress_creates + plan.summary.ingress_updates + plan.summary.ingress_deletes
