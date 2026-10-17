@@ -1,0 +1,68 @@
+{
+  "topology": "multi-account",
+  "version_baseline": "v1.13.0",
+  "description": "Multi-account deployment with tunnel scoping label cf.tunnel.name / tunnel.name",
+  "environment": {
+    "CLOUDFLARE_API_TOKEN": "mock-token-v1-13",
+    "CLOUDFLARE_ZONE_ID": "mock-zone-id-12345",
+    "CLOUDFLARE_TUNNEL_ID": "33333333-4444-5555-6666-777777777777",
+    "CLOUDFLARE_TUNNEL_NAME": "account-a-gateway",
+    "DOMAIN_NAME": "example.com",
+    "REQUIRE_SHARED_NETWORK": "false"
+  },
+  "containers": [
+    {
+      "Id": "acc-a-01",
+      "Names": ["/matched-service"],
+      "State": "running",
+      "NetworkSettings": {
+        "Networks": {
+          "bridge": {
+            "IPAddress": "172.18.0.3"
+          }
+        }
+      },
+      "Labels": {
+        "cf.tunnel.hostname": "match.example.com",
+        "cf.tunnel.port": "8080",
+        "cf.tunnel.name": "account-a-gateway"
+      }
+    },
+    {
+      "Id": "acc-b-02",
+      "Names": ["/ignored-other-account-service"],
+      "State": "running",
+      "NetworkSettings": {
+        "Networks": {
+          "bridge": {
+            "IPAddress": "172.18.0.4"
+          }
+        }
+      },
+      "Labels": {
+        "cf.tunnel.hostname": "other.example.com",
+        "cf.tunnel.port": "8080",
+        "cf.tunnel.name": "account-b-gateway"
+      }
+    }
+  ],
+  "expected_remote_ingress": [
+    {
+      "hostname": "match.example.com",
+      "service": "http://matched-service:8080"
+    },
+    {
+      "service": "http_status:404"
+    }
+  ],
+  "expected_remote_dns": [
+    {
+      "id": "rec-dns-003",
+      "type": "CNAME",
+      "name": "match.example.com",
+      "content": "33333333-4444-5555-6666-777777777777.cfargotunnel.com",
+      "proxied": true,
+      "comment": "[cf-docker-tunnel-sync:33333333-4444-5555-6666-777777777777]"
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "version_baseline": "v1.13.0",
+  "endpoint": "/api/status",
+  "required_keys": [
+    "status",
+    "last_sync",
+    "discovered_services",
+    "all_containers",
+    "error",
+    "warnings"
+  ],
+  "sample_payload": {
+    "status": "Active / Synced",
+    "last_sync": "2026-10-17T10:00:00Z",
+    "discovered_services": [
+      {
+        "container_name": "whoami-service",
+        "hostname": "whoami.example.com",
+        "target": "http://whoami-service:80",
+        "port": 80,
+        "protocol": "http",
+        "status": "healthy"
+      }
+    ],
+    "all_containers": [
+      {
+        "id": "c1a2b3c4d5e6",
+        "name": "whoami-service",
+        "status": "running"
+      }
+    ],
+    "error": null,
+    "warnings": []
+  }
+}

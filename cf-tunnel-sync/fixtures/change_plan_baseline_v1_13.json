@@ -1,0 +1,29 @@
+{
+  "version_baseline": "v1.13.0",
+  "endpoint": "/api/change-plan",
+  "required_keys": [
+    "plan_id",
+    "dry_run",
+    "timestamp",
+    "actions",
+    "summary"
+  ],
+  "required_summary_keys": [
+    "additions",
+    "updates",
+    "deletions",
+    "unmanaged_skipped"
+  ],
+  "sample_payload": {
+    "plan_id": "test-plan-001",
+    "dry_run": false,
+    "timestamp": 1729160000.0,
+    "actions": [],
+    "summary": {
+      "additions": 0,
+      "updates": 0,
+      "deletions": 0,
+      "unmanaged_skipped": 0
+    }
+  }
+}

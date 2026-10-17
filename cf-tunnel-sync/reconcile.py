@@ -362,9 +362,30 @@ def compute_change_plan(
         if host in tombstones:
             tombstones_to_clear.append(host)
 
+    # Build DNS index for evaluation
+    existing_dns_by_name: Dict[str, Dict[str, Any]] = {
+        rec.get("name"): rec for rec in remote.existing_dns_records if rec.get("name")
+    }
+
     # 4. Evaluate Ingress for missing origins (previously configured)
     for host, rule in existing_ingress_by_host.items():
         if host not in discovered_hosts:
+            dns_rec = existing_dns_by_name.get(host)
+            dns_status = tagger.parse_status(dns_rec, target_cname, is_active_local=False) if dns_rec else None
+            # Preserve unmanaged / manual external ingress rules across upgrade (Issue #86)
+            if dns_rec is None or dns_status != OwnershipStatus.OWNED:
+                final_ingress_origins.append(rule)
+                ingress_changes.append(
+                    PlannedIngressChange(
+                        action=IngressActionType.NOOP,
+                        hostname=host,
+                        service=rule.get("service", ""),
+                        path=rule.get("path"),
+                        origin_request=rule.get("originRequest"),
+                        reason="Unmanaged external ingress rule preserved across upgrade",
+                    )
+                )
+                continue
             if immediate_cleanup or dns_delete_grace_seconds <= 0:
                 ingress_changes.append(
                     PlannedIngressChange(
