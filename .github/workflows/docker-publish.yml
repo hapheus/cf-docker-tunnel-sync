@@ -6,6 +6,7 @@ on:
       - main
     tags:
       - 'v*.*.*'
+  workflow_dispatch:
 
 jobs:
   build-and-push:
@@ -16,9 +17,13 @@ jobs:
           - service: cf-tunnel-sync
             context: ./cf-tunnel-sync
             file: ./cf-tunnel-sync/Dockerfile
+            readme: ./cf-tunnel-sync/DOCKERHUB.md
+            short_desc: "Automated route and DNS synchronization between Docker containers and Cloudflare Tunnels"
           - service: cf-tunnel-dashboard
             context: ./cf-tunnel-dashboard
             file: ./cf-tunnel-dashboard/Dockerfile
+            readme: ./cf-tunnel-dashboard/DOCKERHUB.md
+            short_desc: "Web management dashboard for cf-docker-tunnel-sync"
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -67,3 +72,13 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           platforms: linux/amd64,linux/arm64
+
+      - name: Update Docker Hub Description
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}
+          readme-filepath: ${{ matrix.readme }}
+          short-description: ${{ matrix.short_desc }}
