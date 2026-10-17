@@ -1,5 +1,6 @@
 import asyncio
 import http.client
+import ipaddress
 import json
 import logging
 import os
@@ -8,14 +9,16 @@ import secrets
 import socket
 import threading
 import time
+import urllib.parse
 from contextlib import asynccontextmanager
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set
 
 import uvicorn
 from cloudflare import cf_api
 from fastapi import Depends, FastAPI, HTTPException, Response, status
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from pydantic import BaseModel
 
 LOG_LEVEL_NAME = os.getenv("LOG_LEVEL", "INFO").upper()
 LOG_LEVEL = getattr(logging, LOG_LEVEL_NAME, logging.INFO)
@@ -413,40 +416,216 @@ def listen_docker_events(
                     pass
 
 
-def find_cloudflared_container_name() -> str:
+class NetworkPlausibilityResult(BaseModel):
+    is_plausible: bool
+    connection_mode: str  # "shared_docker_network", "host_mode", "external_target", "gateway", "disjoint", "unknown"
+    shared_networks: List[str]
+    diagnostic_message: str
+
+
+def evaluate_origin_network_plausibility(
+    service_target: str,
+    container_networks: Set[str],
+    container_network_mode: Optional[str],
+    connector_networks: Set[str],
+) -> NetworkPlausibilityResult:
+    """
+    Evaluate whether origin container is plausibly reachable by Cloudflare connector container.
+    Guarantees zero false-positive warnings for host network mode, loopback/gateway, and external targets.
+    """
+    # 1. Container in Host Network Mode
+    if container_network_mode == "host" or "host" in container_networks:
+        return NetworkPlausibilityResult(
+            is_plausible=True,
+            connection_mode="host_mode",
+            shared_networks=[],
+            diagnostic_message="Container operates in host network mode (direct port routing).",
+        )
+
+    # 2. Connector in Host Network Mode
+    if "host" in connector_networks:
+        return NetworkPlausibilityResult(
+            is_plausible=True,
+            connection_mode="host_mode",
+            shared_networks=[],
+            diagnostic_message="Connector operates in host network mode.",
+        )
+
+    # Extract target host
+    target_host = ""
+    if service_target:
+        s = service_target.strip()
+        if "://" not in s:
+            s = f"http://{s}"
+        try:
+            parsed = urllib.parse.urlsplit(s)
+            target_host = (parsed.hostname or "").lower()
+        except Exception:
+            target_host = ""
+
+    # 3. Service target points to Host Loopback / Gateway
+    if target_host in ("host.docker.internal", "gateway.docker.internal", "localhost", "127.0.0.1", "172.17.0.1"):
+        return NetworkPlausibilityResult(
+            is_plausible=True,
+            connection_mode="gateway",
+            shared_networks=[],
+            diagnostic_message=f"Service targets host gateway or loopback interface ({target_host}).",
+        )
+
+    # 4. Service target is an external routable IP or FQDN
+    if target_host:
+        try:
+            ip = ipaddress.ip_address(target_host)
+            if not ip.is_loopback and str(ip) != "172.17.0.1":
+                return NetworkPlausibilityResult(
+                    is_plausible=True,
+                    connection_mode="external_target",
+                    shared_networks=[],
+                    diagnostic_message=f"Service targets external IP address ({target_host}).",
+                )
+        except ValueError:
+            pass
+
+        if "." in target_host and not target_host.endswith(".internal") and not target_host.endswith(".local"):
+            return NetworkPlausibilityResult(
+                is_plausible=True,
+                connection_mode="external_target",
+                shared_networks=[],
+                diagnostic_message=f"Service targets external FQDN ({target_host}).",
+            )
+
+    # 5. Shared Docker Network
+    shared = sorted(list(container_networks.intersection(connector_networks)))
+    if shared:
+        return NetworkPlausibilityResult(
+            is_plausible=True,
+            connection_mode="shared_docker_network",
+            shared_networks=shared,
+            diagnostic_message=f"Container and connector share network(s): {', '.join(shared)}.",
+        )
+
+    # 6. Connector networks not discovered / empty
+    if not connector_networks:
+        return NetworkPlausibilityResult(
+            is_plausible=True,
+            connection_mode="unknown",
+            shared_networks=[],
+            diagnostic_message="Connector networks could not be determined; skipping strict network check.",
+        )
+
+    # 7. Disjoint Networks
+    c_nets_str = ", ".join(sorted(container_networks)) if container_networks else "none"
+    cf_nets_str = ", ".join(sorted(connector_networks)) if connector_networks else "none"
+    return NetworkPlausibilityResult(
+        is_plausible=False,
+        connection_mode="disjoint",
+        shared_networks=[],
+        diagnostic_message=(
+            f"Container networks ({c_nets_str}) do not overlap with connector networks ({cf_nets_str}). "
+            f"Requests to '{service_target}' will fail with 502 Bad Gateway! Attach both containers to a shared Docker bridge network."
+        ),
+    )
+
+
+def resolve_target_connector_container(containers: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """
+    Resolve the single target cloudflared connector container among running containers.
+    Prevents network bleeding across unrelated cloudflared instances or compose projects.
+    """
+    if not isinstance(containers, list):
+        return None
+
+    explicit_name = os.getenv("CLOUDFLARED_CONTAINER_NAME", "").strip()
+
+    # 1. If explicit CLOUDFLARED_CONTAINER_NAME is configured, match strictly against that container
+    if explicit_name:
+        for c in containers:
+            if not isinstance(c, dict):
+                continue
+            c_id = c.get("Id", "")
+            c_names = [n.lstrip("/") for n in c.get("Names", [])]
+            c_labels = c.get("Labels") or {}
+            if (
+                explicit_name in c_names
+                or c_id == explicit_name
+                or (len(explicit_name) >= 12 and c_id.startswith(explicit_name))
+                or c_labels.get("com.docker.compose.service") == explicit_name
+            ):
+                return c
+        return None
+
+    # 2. Scope to current Compose project if detectable
+    my_hostname = os.getenv("HOSTNAME") or socket.gethostname()
+    current_project = None
+    for c in containers:
+        if not isinstance(c, dict):
+            continue
+        c_id = c.get("Id", "")
+        c_names = [n.lstrip("/") for n in c.get("Names", [])]
+        c_labels = c.get("Labels") or {}
+        if (
+            c_id.startswith(my_hostname)
+            or my_hostname in c_names
+            or c_labels.get("com.docker.compose.service") in ("cf-docker-tunnel-sync", "tunnel-sync")
+        ):
+            current_project = c_labels.get("com.docker.compose.project")
+            if current_project:
+                break
+
+    if current_project:
+        for c in containers:
+            if not isinstance(c, dict):
+                continue
+            c_labels = c.get("Labels") or {}
+            if c_labels.get("com.docker.compose.project") == current_project:
+                c_names = [n.lstrip("/") for n in c.get("Names", [])]
+                if c_labels.get("com.docker.compose.service") == "cloudflared" or "cloudflared" in c_names:
+                    return c
+
+    # 3. Match exact container name 'cloudflared'
+    for c in containers:
+        if not isinstance(c, dict):
+            continue
+        c_names = [n.lstrip("/") for n in c.get("Names", [])]
+        if "cloudflared" in c_names:
+            return c
+
+    # 4. If unambiguous single container with compose service 'cloudflared' exists, match it
+    cf_service_matches = [
+        c
+        for c in containers
+        if isinstance(c, dict) and (c.get("Labels") or {}).get("com.docker.compose.service") == "cloudflared"
+    ]
+    if len(cf_service_matches) == 1:
+        return cf_service_matches[0]
+
+    return None
+
+
+def find_cloudflared_container_name(containers: Optional[List[Dict[str, Any]]] = None) -> str:
     """Resolve the cloudflared container name or ID dynamically."""
     explicit_name = os.getenv("CLOUDFLARED_CONTAINER_NAME", "").strip()
     if explicit_name:
         return explicit_name
 
-    try:
-        containers = docker_api("/containers/json?all=true")
-        if isinstance(containers, list):
-            my_hostname = os.getenv("HOSTNAME", "").strip()
-            current_project = None
-            if my_hostname:
-                for c in containers:
-                    c_id = c.get("Id", "")
-                    c_names = [n.lstrip("/") for n in c.get("Names", [])]
-                    if c_id.startswith(my_hostname) or my_hostname in c_names:
-                        current_project = (c.get("Labels") or {}).get("com.docker.compose.project")
-                        break
+    if containers is not None:
+        target = resolve_target_connector_container(containers)
+        if target:
+            c_names = [n.lstrip("/") for n in target.get("Names", [])]
+            if c_names:
+                return c_names[0]
+            return target.get("Id", "cloudflared")
+        return "cloudflared"
 
-            for c in containers:
-                labels = c.get("Labels") or {}
-                service = labels.get("com.docker.compose.service")
-                project = labels.get("com.docker.compose.project")
-                if service == "cloudflared":
-                    if current_project and project == current_project:
-                        c_names = c.get("Names", [])
-                        if c_names:
-                            return c_names[0].lstrip("/")
-                        return c.get("Id", "cloudflared")
-                    elif not current_project:
-                        c_names = c.get("Names", [])
-                        if c_names:
-                            return c_names[0].lstrip("/")
-                        return c.get("Id", "cloudflared")
+    try:
+        raw_containers = docker_api("/containers/json?all=true")
+        if isinstance(raw_containers, list):
+            target = resolve_target_connector_container(raw_containers)
+            if target:
+                c_names = [n.lstrip("/") for n in target.get("Names", [])]
+                if c_names:
+                    return c_names[0]
+                return target.get("Id", "cloudflared")
     except Exception as e:
         logger.warning(f"Error resolving cloudflared container: {e}")
 
@@ -463,6 +642,8 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
     try:
         expected_network = os.getenv("CF_NETWORK_NAME", "cf-tunnel-net").strip()
         require_shared_net = os.getenv("REQUIRE_SHARED_NETWORK", "false").lower() in ("true", "1", "yes")
+        strict_network_check = os.getenv("STRICT_NETWORK_CHECK", "false").lower() in ("true", "1", "yes")
+        enforce_strict_network = strict_network_check or require_shared_net
 
         cloudflared_networks = set()
         if expected_network:
@@ -507,19 +688,21 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
             return [], []
 
         if isinstance(containers, list):
-            cf_target_name = find_cloudflared_container_name()
-            for cand in containers:
-                if isinstance(cand, dict):
-                    cand_labels = cand.get("Labels") or {}
-                    cand_names = cand.get("Names", [])
-                    cand_name_clean = cand_names[0].lstrip("/") if cand_names else ""
-                    if (
-                        cand_labels.get("com.docker.compose.service") == "cloudflared"
-                        or cand_name_clean == cf_target_name
-                    ):
-                        cand_nets = (cand.get("NetworkSettings") or {}).get("Networks") or {}
-                        cloudflared_networks.update(cand_nets.keys())
+            target_connector = resolve_target_connector_container(containers)
+            if target_connector:
+                target_nets = (target_connector.get("NetworkSettings") or {}).get("Networks") or {}
+                cloudflared_networks.update(target_nets.keys())
+                target_net_mode = (target_connector.get("HostConfig") or {}).get("NetworkMode")
+                if target_net_mode == "host":
+                    cloudflared_networks.add("host")
+
             for c in containers:
+                # Cleanly reset per-container evaluation flags
+                is_tunneled = False
+                has_shared_net = True
+                service_url = ""
+                plausibility: Optional[NetworkPlausibilityResult] = None
+
                 labels = c.get("Labels") or {}
                 c_names = c.get("Names", ["/unknown"])
                 c_name = c_names[0].lstrip("/") if c_names else "unknown"
@@ -714,25 +897,37 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
                         if http_host_header and str(http_host_header).strip():
                             origin_request["httpHostHeader"] = str(http_host_header).strip()
 
-                        # Network Pre-flight Diagnostic
+                        # Origin Network Pre-flight Diagnostic
                         c_nets = (c.get("NetworkSettings") or {}).get("Networks") or {}
                         container_networks = set(c_nets.keys())
-                        if container_networks and cloudflared_networks:
-                            has_shared_net = bool(container_networks.intersection(cloudflared_networks))
-                        else:
-                            has_shared_net = True
+                        container_network_mode = (c.get("HostConfig") or {}).get("NetworkMode")
+
+                        plausibility = evaluate_origin_network_plausibility(
+                            service_target=service_url,
+                            container_networks=container_networks,
+                            container_network_mode=container_network_mode,
+                            connector_networks=cloudflared_networks,
+                        )
+                        has_shared_net = plausibility.is_plausible
 
                         if not has_shared_net:
-                            add_log(
-                                f"⚠️ Network Diagnostic: Container '{c_name}' is not attached to Cloudflare tunnel network '{expected_network}'. Requests to '{service_url}' will fail with 502 Bad Gateway!"
+                            target_net_display = expected_network or (
+                                ", ".join(sorted(cloudflared_networks))
+                                if cloudflared_networks
+                                else "cloudflared network"
                             )
-                            if require_shared_net:
+                            add_log(
+                                f"⚠️ Network Diagnostic: Container '{c_name}' is not attached to Cloudflare tunnel network '{target_net_display}'. "
+                                f"Requests to '{service_url}' will fail with 502 Bad Gateway! {plausibility.diagnostic_message}"
+                            )
+                            if enforce_strict_network:
                                 add_log(
-                                    f"⛔ Excluding '{c_name}' from sync: REQUIRE_SHARED_NETWORK=true and shared network '{expected_network}' is missing."
+                                    f"⛔ Excluding '{c_name}' from sync: STRICT_NETWORK_CHECK=true / REQUIRE_SHARED_NETWORK=true and shared network '{target_net_display}' is missing. {plausibility.diagnostic_message}"
                                 )
                                 is_tunneled = False
 
                         service_item = {
+                            "name": c_name,
                             "container": c_name,
                             "hostname": hostname,
                             "service": service_url,
@@ -740,7 +935,15 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
                             "network_connected": has_shared_net,
                         }
                         if not has_shared_net:
-                            service_item["network_warning"] = f"Missing shared network '{expected_network}'"
+                            target_net_display = expected_network or (
+                                ", ".join(sorted(cloudflared_networks))
+                                if cloudflared_networks
+                                else "cloudflared network"
+                            )
+                            service_item["network_warning"] = (
+                                f"Missing shared network '{target_net_display}'. "
+                                f"Requests to {service_url} may 502 Bad Gateway. {plausibility.diagnostic_message}"
+                            )
                         if origin_request:
                             service_item["originRequest"] = origin_request
 
@@ -755,7 +958,7 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
                         "status": status_text,
                         "hostname": hostname if hostname else "-",
                         "is_tunneled": is_tunneled,
-                        "network_connected": has_shared_net if "has_shared_net" in locals() else True,
+                        "network_connected": has_shared_net,
                     }
                 )
     except Exception as e:
