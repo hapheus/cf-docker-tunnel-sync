@@ -912,7 +912,9 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
 
                         if not has_shared_net:
                             target_net_display = expected_network or (
-                                ", ".join(sorted(cloudflared_networks)) if cloudflared_networks else "cloudflared network"
+                                ", ".join(sorted(cloudflared_networks))
+                                if cloudflared_networks
+                                else "cloudflared network"
                             )
                             add_log(
                                 f"⚠️ Network Diagnostic: Container '{c_name}' is not attached to Cloudflare tunnel network '{target_net_display}'. "
@@ -934,7 +936,9 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
                         }
                         if not has_shared_net:
                             target_net_display = expected_network or (
-                                ", ".join(sorted(cloudflared_networks)) if cloudflared_networks else "cloudflared network"
+                                ", ".join(sorted(cloudflared_networks))
+                                if cloudflared_networks
+                                else "cloudflared network"
                             )
                             service_item["network_warning"] = (
                                 f"Missing shared network '{target_net_display}'. "
