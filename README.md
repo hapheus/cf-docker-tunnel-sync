@@ -240,6 +240,7 @@ networks:
 | `cf.tunnel.tunnel_name` | Target a specific Cloudflare Tunnel for multi-tunnel hosts. | Value of `CLOUDFLARE_TUNNEL_NAME` | No |
 | `cf.tunnel.account_id` | Target a specific Cloudflare Account ID for multi-account hosts. | Value of `CLOUDFLARE_ACCOUNT_ID` | No |
 | `cf.tunnel.enabled` | Explicitly enable (`true`) or disable (`false`) syncing for this container. | `true` (if hostname present) | No |
+| `cf.tunnel.access.policy` | Exposure tier policy tag (`public`, `protected`, `internal`, `unspecified`). | `unspecified` | No |
 
 ### 🔍 Port Discovery Hierarchy
 When `cf.tunnel.port` is not explicitly set, `cf-docker-tunnel-sync` determines the target origin port using the following precedence:
@@ -304,6 +305,11 @@ To avoid DNS flapping, slow propagation, and API rate limits during brief contai
 | `PREFLIGHT_ONLY` | Run read-only preflight readiness validation and exit immediately without mutations. | `false` | No |
 | `MAX_DELETIONS_PER_SYNC` | Maximum route deletions permitted per sync cycle before safety guard aborts. | `3` | No |
 | `ALLOW_MASS_DELETIONS` | Explicit override to bypass the blast-radius deletion budget guard. | `false` | No |
+| `LOG_FORMAT` | Log format: `text` (human-readable) or `json` (single-line JSON for Loki/Datadog). | `text` | No |
+| `CLOUDFLARE_MAX_RETRIES` | Maximum retry attempts for transient Cloudflare API errors (429, 5xx). | `3` | No |
+| `NOTIFICATION_WEBHOOK_URL` | Webhook URL for alert notifications on sync failures or safety trips. | - | No |
+| `NOTIFICATION_WEBHOOK_TYPE` | Webhook format: `auto` (auto-detects Discord/Slack), `slack`, `discord`, or `generic`. | `auto` | No |
+| `NOTIFICATION_COOLDOWN_SECONDS` | Cooldown period to suppress duplicate webhook alerts. | `300` | No |
 
 ---
 

@@ -15,6 +15,7 @@ from typing import Any, Callable, Dict, List, Optional, Set
 
 import uvicorn
 from cloudflare import cf_api
+from config import detect_env_typos, validate_tunnel_uuid
 from diagnostics import (
     compute_truthful_service_status,
     evaluate_service_stages,
@@ -22,6 +23,8 @@ from diagnostics import (
 from fastapi import Depends, FastAPI, HTTPException, Response, status
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from metrics import metrics_registry
+from notifications import default_dispatcher
 from pydantic import BaseModel
 from reconcile import (
     BlastRadiusExceededError,
@@ -32,12 +35,10 @@ from reconcile import (
     build_discovery_snapshot,
     compute_change_plan,
 )
+from starlette.responses import PlainTextResponse
 
 LOG_LEVEL_NAME = os.getenv("LOG_LEVEL", "INFO").upper()
 LOG_LEVEL = getattr(logging, LOG_LEVEL_NAME, logging.INFO)
-logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("cf-tunnel-sync")
-logger.setLevel(LOG_LEVEL)
 
 
 class HealthCheckFilter(logging.Filter):
@@ -57,6 +58,61 @@ class HealthCheckFilter(logging.Filter):
         except Exception:
             pass
         return True
+
+
+class JsonLogFormatter(logging.Formatter):
+    """Structured JSON log formatter for machine-readable logging (Loki, Datadog)."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        log_entry = {
+            "timestamp": self.formatTime(record, "%Y-%m-%dT%H:%M:%SZ"),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+            "module": record.module,
+            "line": record.lineno,
+        }
+        if record.exc_info:
+            log_entry["exception"] = self.formatException(record.exc_info)
+        return json.dumps(log_entry)
+
+
+def setup_application_logging():
+    log_format = os.getenv("LOG_FORMAT", "text").strip().lower()
+    root_logger = logging.getLogger()
+    for h in root_logger.handlers[:]:
+        root_logger.removeHandler(h)
+
+    handler = logging.StreamHandler()
+    if log_format == "json":
+        handler.setFormatter(JsonLogFormatter())
+    else:
+        handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+
+    handler.addFilter(HealthCheckFilter())
+    root_logger.addHandler(handler)
+    root_logger.setLevel(LOG_LEVEL)
+
+
+def perform_startup_validation(exit_on_error: bool = False):
+    """Perform environment typo detection and tunnel UUID format validation (Issue #54)."""
+    warnings = detect_env_typos()
+    tunnel_id = os.getenv("CLOUDFLARE_TUNNEL_ID")
+    if tunnel_id:
+        is_valid, err = validate_tunnel_uuid(tunnel_id)
+        if not is_valid:
+            logger.critical("Configuration validation error: %s", err)
+            if exit_on_error:
+                import sys
+
+                sys.exit(1)
+            warnings.append(err)
+    return warnings
+
+
+setup_application_logging()
+logger = logging.getLogger("cf-tunnel-sync")
+logger.setLevel(LOG_LEVEL)
 
 
 logging.getLogger("uvicorn.access").addFilter(HealthCheckFilter())
@@ -947,12 +1003,21 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
                                 )
                                 is_tunneled = False
 
+                        raw_policy = (
+                            labels.get("cf.tunnel.access.policy")
+                            or labels.get("cf.tunnel.access_policy")
+                            or labels.get("cloudflared.access.policy")
+                            or "unspecified"
+                        )
+                        access_policy = str(raw_policy).strip().lower() or "unspecified"
+
                         service_item = {
                             "name": c_name,
                             "container": c_name,
                             "hostname": hostname,
                             "service": service_url,
                             "no_tls_verify": no_tls_verify,
+                            "access_policy": access_policy,
                             "network_connected": has_shared_net,
                         }
                         if not has_shared_net:
@@ -1001,6 +1066,9 @@ def get_docker_containers() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
                 if is_tunneled:
                     container_entry["stages"] = stages
                     container_entry["status"] = service_item["status"]
+                    container_entry["access_policy"] = service_item.get("access_policy", "unspecified")
+                else:
+                    container_entry["access_policy"] = "unspecified"
                 all_containers.append(container_entry)
     except Exception as e:
         sync_state["docker_connected"] = False
@@ -1054,6 +1122,7 @@ def run_sync_logic():
         add_log("⏳ Sync already in progress, skipping concurrent run")
         return
 
+    sync_start_time = time.time()
     try:
         token = os.getenv("CLOUDFLARE_API_TOKEN")
         domain = get_domain_name()
@@ -1456,11 +1525,26 @@ def run_sync_logic():
         if ingress_failed or dns_failed or any(s.get("status") in ("Degraded", "Failed") for s in services):
             sync_state["status"] = "Degraded"
             add_log("⚠️ Sync completed with degraded service states.")
+            default_dispatcher.dispatch_sync(
+                event_type="SYNC_DEGRADED",
+                title="Sync Completed in Degraded State",
+                message="One or more services failed ingress or DNS configuration.",
+                level="warning",
+                details={"service_count": len(services)},
+            )
         else:
             sync_state["status"] = "Active / Synced"
             add_log("🎉 Sync completed successfully!")
 
         sync_state["last_sync"] = time.strftime("%Y-%m-%d %H:%M:%S")
+
+        sync_duration = time.time() - sync_start_time
+        metrics_registry.record_sync_run(
+            duration=sync_duration,
+            status="success" if sync_state["status"] == "Active / Synced" else "degraded",
+            discovered_count=len(services),
+            safety_tripped=False,
+        )
 
     except BlastRadiusExceededError as b_err:
         add_log(f"❌ {b_err}")
@@ -1471,9 +1555,44 @@ def run_sync_logic():
             "planned_deletions": planned_deletions,
             "limit": max_deletions,
         }
+        sync_duration = time.time() - sync_start_time
+        metrics_registry.record_sync_run(
+            duration=sync_duration,
+            status="blocked",
+            discovered_count=len(services) if "services" in locals() else 0,
+            safety_tripped=True,
+        )
+        default_dispatcher.dispatch_sync(
+            event_type="SAFETY_GUARD_TRIPPED",
+            title="Blast-Radius Deletion Guard Tripped",
+            message=(
+                f"Sync cycle aborted: planned deletions ({planned_deletions}) exceed limit ({max_deletions}). "
+                "Set ALLOW_MASS_DELETIONS=true to override."
+            ),
+            level="error",
+            details={
+                "planned_deletions": planned_deletions,
+                "limit": max_deletions,
+                "error": str(b_err),
+            },
+        )
     except Exception as e:
         add_log(f"❌ Sync Error: {e}")
         sync_state["status"] = f"Error: {e}"
+        sync_duration = time.time() - sync_start_time
+        metrics_registry.record_sync_run(
+            duration=sync_duration,
+            status="error",
+            discovered_count=len(services) if "services" in locals() else 0,
+            safety_tripped=False,
+        )
+        default_dispatcher.dispatch_sync(
+            event_type="SYNC_FAILURE",
+            title="Synchronization Failure",
+            message=f"Sync error encountered: {e}",
+            level="error",
+            details={"error": str(e)},
+        )
     finally:
         sync_lock.release()
 
@@ -1502,6 +1621,7 @@ sync_loop = fallback_sync_loop
 
 @asynccontextmanager
 async def lifespan(fastapi_app: FastAPI):
+    perform_startup_validation()
     global event_listener_thread, event_stop_event
     loop = asyncio.get_running_loop()
     debouncer.set_loop(loop)
@@ -1685,6 +1805,15 @@ def api_sync_preview(authenticated: bool = Depends(check_dashboard_auth)):
 @app.get("/api/status")
 def api_status(authenticated: bool = Depends(check_dashboard_auth)):
     return JSONResponse(sanitize_sync_state(sync_state))
+
+
+@app.get("/metrics", response_class=PlainTextResponse)
+def get_prometheus_metrics():
+    """Prometheus exposition format endpoint (Issue #55)."""
+    return PlainTextResponse(
+        metrics_registry.generate_exposition(),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
 
 
 @app.get("/api/change-plan")
@@ -1888,6 +2017,8 @@ if __name__ == "__main__":
         "--dry-run", action="store_true", help="Run sync in predictive dry-run mode (no Cloudflare mutations)"
     )
     args, unknown = parser.parse_known_args()
+
+    perform_startup_validation(exit_on_error=True)
 
     if args.dry_run:
         os.environ["DRY_RUN"] = "true"
