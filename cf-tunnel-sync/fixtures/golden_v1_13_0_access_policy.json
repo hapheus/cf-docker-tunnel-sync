@@ -1,0 +1,91 @@
+{
+  "topology": "access-policy-and-custom-network",
+  "version": "1.13.0",
+  "tunnel": {
+    "tunnel_id": "00000000-0000-0000-0000-000000000004",
+    "tunnel_name": "policy-tunnel",
+    "zone_id": "zone_policy_101",
+    "tunnel_target": "00000000-0000-0000-0000-000000000004.cfargotunnel.com"
+  },
+  "docker_containers": [
+    {
+      "Id": "c_policy_app_001",
+      "Names": ["/policy_app"],
+      "State": {"Status": "running", "Running": true},
+      "Config": {
+        "Labels": {
+          "cf.tunnel.hostname": "portal.example.com",
+          "cf.tunnel.service": "http://policy_app:8080",
+          "cf.tunnel.access.policy": "PUBLIC",
+          "cf.tunnel.origin_request.no_tls_verify": "false"
+        }
+      },
+      "NetworkSettings": {
+        "Networks": {
+          "custom-bridge-net": {
+            "IPAddress": "172.29.0.2",
+            "Aliases": ["policy_app"]
+          }
+        }
+      }
+    }
+  ],
+  "discovered_origins": [
+    {
+      "container_id": "c_policy_app_001",
+      "container_name": "policy_app",
+      "hostname": "portal.example.com",
+      "service_target": "http://policy_app:8080",
+      "origin_request": {
+        "noTLSVerify": false
+      },
+      "labels": {
+        "cf.tunnel.hostname": "portal.example.com",
+        "cf.tunnel.service": "http://policy_app:8080",
+        "cf.tunnel.access.policy": "PUBLIC",
+        "cf.tunnel.origin_request.no_tls_verify": "false"
+      }
+    }
+  ],
+  "remote_state": {
+    "tunnel_id": "00000000-0000-0000-0000-000000000004",
+    "tunnel_name": "policy-tunnel",
+    "zone_id": "zone_policy_101",
+    "tunnel_target": "00000000-0000-0000-0000-000000000004.cfargotunnel.com",
+    "existing_ingress_rules": [
+      {
+        "hostname": "portal.example.com",
+        "service": "http://policy_app:8080",
+        "originRequest": {
+          "noTLSVerify": false
+        }
+      },
+      {
+        "service": "http_status:404"
+      }
+    ],
+    "existing_dns_records": [
+      {
+        "id": "dns_policy_001",
+        "name": "portal.example.com",
+        "type": "CNAME",
+        "content": "00000000-0000-0000-0000-000000000004.cfargotunnel.com",
+        "proxied": true,
+        "comment": "cf-tunnel-sync:policy-tunnel"
+      }
+    ]
+  },
+  "expected_plan_summary": {
+    "total_services_discovered": 1,
+    "ingress_creates": 0,
+    "ingress_updates": 0,
+    "ingress_deletes": 0,
+    "dns_creates": 0,
+    "dns_updates": 0,
+    "dns_deletes": 0,
+    "dns_protected": 1,
+    "unmanaged_skipped": 0,
+    "has_mutations": false,
+    "is_destructive": false
+  }
+}

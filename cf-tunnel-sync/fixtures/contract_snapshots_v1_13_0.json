@@ -1,0 +1,121 @@
+{
+  "version": "1.13.0",
+  "known_env_vars": {
+    "DOMAIN_NAME": {"type": "str", "required": true, "secret": false},
+    "CLOUDFLARE_API_TOKEN": {"type": "str", "required": true, "secret": true},
+    "CLOUDFLARE_TOKEN": {"type": "str", "required": false, "secret": true},
+    "CLOUDFLARE_ACCOUNT_ID": {"type": "str", "required": false, "secret": false},
+    "CLOUDFLARE_ZONE_ID": {"type": "str", "required": false, "secret": false},
+    "CLOUDFLARE_TUNNEL_NAME": {"type": "str", "required": false, "default": "cf-docker-tunnel-sync", "secret": false},
+    "TUNNEL_NAME": {"type": "str", "required": false, "secret": false},
+    "CLOUDFLARE_TUNNEL_ID": {"type": "str", "required": false, "secret": false},
+    "CLOUDFLARE_DNS_PROXIED": {"type": "bool", "required": false, "default": true, "secret": false},
+    "PROXIED": {"type": "bool", "required": false, "secret": false},
+    "AUTO_CREATE_TUNNEL": {"type": "bool", "required": false, "default": true, "secret": false},
+    "REQUIRE_SHARED_NETWORK": {"type": "bool", "required": false, "default": false, "secret": false},
+    "STRICT_NETWORK_CHECK": {"type": "bool", "required": false, "default": false, "secret": false},
+    "CF_NETWORK_NAME": {"type": "str", "required": false, "default": "cf-tunnel-net", "secret": false},
+    "CUSTOM_NETWORK": {"type": "str", "required": false, "secret": false},
+    "SYNC_INTERVAL": {"type": "int", "required": false, "default": 10, "secret": false},
+    "POLL_INTERVAL": {"type": "int", "required": false, "secret": false},
+    "SYNC_FALLBACK_INTERVAL": {"type": "int", "required": false, "secret": false},
+    "ENABLE_DEBOUNCING": {"type": "bool", "required": false, "default": true, "secret": false},
+    "DEBOUNCE_WAIT_SECONDS": {"type": "float", "required": false, "default": 2.0, "secret": false},
+    "DASHBOARD_ENABLED": {"type": "bool", "required": false, "default": true, "secret": false},
+    "DASHBOARD_PORT": {"type": "int", "required": false, "default": 8080, "secret": false},
+    "PORT": {"type": "int", "required": false, "secret": false},
+    "DASHBOARD_BIND_ADDRESS": {"type": "str", "required": false, "default": "0.0.0.0", "secret": false},
+    "DASHBOARD_AUTH_ENABLED": {"type": "bool", "required": false, "default": false, "secret": false},
+    "DASHBOARD_USERNAME": {"type": "str", "required": false, "secret": false},
+    "DASHBOARD_PASSWORD": {"type": "str", "required": false, "secret": true},
+    "BASIC_AUTH_USERNAME": {"type": "str", "required": false, "secret": false},
+    "BASIC_AUTH_PASSWORD": {"type": "str", "required": false, "secret": true},
+    "PROMETHEUS_METRICS_ENABLED": {"type": "bool", "required": false, "default": true, "secret": false},
+    "DRY_RUN": {"type": "bool", "required": false, "default": false, "secret": false},
+    "PREFLIGHT_ONLY": {"type": "bool", "required": false, "default": false, "secret": false},
+    "ENABLE_CHANGE_PLAN": {"type": "bool", "required": false, "default": false, "secret": false},
+    "MAX_DELETIONS_PER_SYNC": {"type": "int", "required": false, "default": 5, "secret": false},
+    "MAX_DELETIONS_PER_RUN": {"type": "int", "required": false, "secret": false},
+    "MAX_DELETION_RATIO": {"type": "float", "required": false, "default": 0.5, "secret": false},
+    "ALLOW_MASS_DELETIONS": {"type": "bool", "required": false, "default": false, "secret": false},
+    "LOG_FORMAT": {"type": "str", "required": false, "default": "text", "secret": false},
+    "LOG_LEVEL": {"type": "str", "required": false, "default": "INFO", "secret": false}
+  },
+  "label_aliases": {
+    "tunnel.hostname": "cf.tunnel.hostname",
+    "tunnel.port": "cf.tunnel.port",
+    "tunnel.proto": "cf.tunnel.proto",
+    "tunnel.protocol": "cf.tunnel.protocol",
+    "tunnel.service": "cf.tunnel.service",
+    "tunnel.notlsverify": "cf.tunnel.originRequest.noTLSVerify",
+    "cloudflared.hostname": "cf.tunnel.hostname",
+    "cloudflared.port": "cf.tunnel.port",
+    "cloudflared.proto": "cf.tunnel.proto",
+    "cloudflared.protocol": "cf.tunnel.protocol",
+    "cloudflared.service": "cf.tunnel.service",
+    "cloudflared.notlsverify": "cf.tunnel.originRequest.noTLSVerify",
+    "cloudflared.name": "cf.tunnel.name",
+    "cloudflared.tunnel": "cf.tunnel.name",
+    "proto": "cf.tunnel.proto",
+    "port": "cf.tunnel.port",
+    "notlsverify": "cf.tunnel.originRequest.noTLSVerify",
+    "origin_server_name": "cf.tunnel.originRequest.originServerName",
+    "cf.tunnel.origin_server_name": "cf.tunnel.originRequest.originServerName",
+    "cf.tunnel.originrequest.originservername": "cf.tunnel.originRequest.originServerName",
+    "http_host_header": "cf.tunnel.originRequest.httpHostHeader",
+    "cf.tunnel.http_host_header": "cf.tunnel.originRequest.httpHostHeader",
+    "cf.tunnel.originrequest.httphostheader": "cf.tunnel.originRequest.httpHostHeader"
+  },
+  "api_contracts": {
+    "/health": {
+      "method": "GET",
+      "required_fields": {
+        "status": "str"
+      }
+    },
+    "/api/status": {
+      "method": "GET",
+      "required_fields": {
+        "status": "str",
+        "last_sync": "optional_str",
+        "tunnel_id": "optional_str",
+        "tunnel_name": "str",
+        "domain_name": "str",
+        "discovered_services": "list",
+        "all_containers": "list",
+        "dns_records": "list",
+        "logs": "list",
+        "docker_connected": "bool",
+        "tombstones": "dict",
+        "safety_guard_tripped": "bool"
+      }
+    },
+    "/api/change-plan": {
+      "method": "GET",
+      "required_fields": {
+        "plan_id": "str",
+        "dry_run": "bool",
+        "timestamp": "float",
+        "actions": "list",
+        "summary": "dict"
+      },
+      "required_summary_fields": {
+        "additions": "int",
+        "updates": "int",
+        "deletions": "int",
+        "unmanaged_skipped": "int"
+      }
+    },
+    "/metrics": {
+      "method": "GET",
+      "content_type": "text/plain; version=0.0.4; charset=utf-8",
+      "required_metrics": [
+        "cf_tunnel_sync_runs_total",
+        "cf_tunnel_sync_duration_seconds",
+        "cf_tunnel_services_discovered",
+        "cf_tunnel_api_requests_total",
+        "cf_tunnel_safety_guard_tripped"
+      ]
+    }
+  }
+}

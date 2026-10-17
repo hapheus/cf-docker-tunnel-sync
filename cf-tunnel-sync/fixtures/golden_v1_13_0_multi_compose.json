@@ -1,0 +1,140 @@
+{
+  "topology": "multi-compose",
+  "version": "1.13.0",
+  "tunnel": {
+    "tunnel_id": "00000000-0000-0000-0000-000000000002",
+    "tunnel_name": "multi-tunnel",
+    "zone_id": "zone_multi_compose_456",
+    "tunnel_target": "00000000-0000-0000-0000-000000000002.cfargotunnel.com"
+  },
+  "docker_containers": [
+    {
+      "Id": "c_multi_frontend_001",
+      "Names": ["/multi_frontend_app"],
+      "State": {"Status": "running", "Running": true},
+      "Config": {
+        "Labels": {
+          "cf.tunnel.hostname": "frontend.example.com",
+          "cf.tunnel.service": "http://frontend_app:3000",
+          "com.docker.compose.project": "frontend-stack"
+        }
+      },
+      "NetworkSettings": {
+        "Networks": {
+          "cf-tunnel-net": {
+            "IPAddress": "172.28.0.3",
+            "Aliases": ["frontend_app"]
+          }
+        }
+      }
+    },
+    {
+      "Id": "c_multi_backend_002",
+      "Names": ["/multi_backend_api"],
+      "State": {"Status": "running", "Running": true},
+      "Config": {
+        "Labels": {
+          "cf.tunnel.hostname": "api.example.com",
+          "cf.tunnel.service": "http://backend_api:8080",
+          "cf.tunnel.name": "multi-tunnel",
+          "com.docker.compose.project": "backend-stack"
+        }
+      },
+      "NetworkSettings": {
+        "Networks": {
+          "cf-tunnel-net": {
+            "IPAddress": "172.28.0.4",
+            "Aliases": ["backend_api"]
+          }
+        }
+      }
+    }
+  ],
+  "discovered_origins": [
+    {
+      "container_id": "c_multi_frontend_001",
+      "container_name": "frontend_app",
+      "hostname": "frontend.example.com",
+      "service_target": "http://frontend_app:3000",
+      "origin_request": {
+        "noTLSVerify": false
+      },
+      "labels": {
+        "cf.tunnel.hostname": "frontend.example.com",
+        "cf.tunnel.service": "http://frontend_app:3000",
+        "com.docker.compose.project": "frontend-stack"
+      }
+    },
+    {
+      "container_id": "c_multi_backend_002",
+      "container_name": "backend_api",
+      "hostname": "api.example.com",
+      "service_target": "http://backend_api:8080",
+      "origin_request": {
+        "noTLSVerify": false
+      },
+      "labels": {
+        "cf.tunnel.hostname": "api.example.com",
+        "cf.tunnel.service": "http://backend_api:8080",
+        "cf.tunnel.name": "multi-tunnel",
+        "com.docker.compose.project": "backend-stack"
+      }
+    }
+  ],
+  "remote_state": {
+    "tunnel_id": "00000000-0000-0000-0000-000000000002",
+    "tunnel_name": "multi-tunnel",
+    "zone_id": "zone_multi_compose_456",
+    "tunnel_target": "00000000-0000-0000-0000-000000000002.cfargotunnel.com",
+    "existing_ingress_rules": [
+      {
+        "hostname": "frontend.example.com",
+        "service": "http://frontend_app:3000",
+        "originRequest": {
+          "noTLSVerify": false
+        }
+      },
+      {
+        "hostname": "api.example.com",
+        "service": "http://backend_api:8080",
+        "originRequest": {
+          "noTLSVerify": false
+        }
+      },
+      {
+        "service": "http_status:404"
+      }
+    ],
+    "existing_dns_records": [
+      {
+        "id": "dns_multi_001",
+        "name": "frontend.example.com",
+        "type": "CNAME",
+        "content": "00000000-0000-0000-0000-000000000002.cfargotunnel.com",
+        "proxied": true,
+        "comment": "cf-tunnel-sync:multi-tunnel"
+      },
+      {
+        "id": "dns_multi_002",
+        "name": "api.example.com",
+        "type": "CNAME",
+        "content": "00000000-0000-0000-0000-000000000002.cfargotunnel.com",
+        "proxied": true,
+        "comment": "cf-tunnel-sync:multi-tunnel"
+      }
+    ]
+  },
+  "expected_plan_summary": {
+    "total_services_discovered": 2,
+    "ingress_creates": 0,
+    "ingress_updates": 0,
+    "ingress_deletes": 0,
+    "dns_creates": 0,
+    "dns_updates": 0,
+    "dns_deletes": 0,
+    "dns_protected": 2,
+    "unmanaged_skipped": 0,
+    "has_mutations": false,
+    "is_destructive": false
+  }
+}

@@ -1,0 +1,87 @@
+{
+  "topology": "single-compose",
+  "version": "1.13.0",
+  "tunnel": {
+    "tunnel_id": "00000000-0000-0000-0000-000000000001",
+    "tunnel_name": "primary-tunnel",
+    "zone_id": "zone_single_compose_123",
+    "tunnel_target": "00000000-0000-0000-0000-000000000001.cfargotunnel.com"
+  },
+  "docker_containers": [
+    {
+      "Id": "c_single_whoami_001",
+      "Names": ["/single_whoami"],
+      "State": {"Status": "running", "Running": true},
+      "Config": {
+        "Labels": {
+          "cf.tunnel.hostname": "whoami.example.com",
+          "cf.tunnel.service": "http://whoami:80"
+        }
+      },
+      "NetworkSettings": {
+        "Networks": {
+          "cf-tunnel-net": {
+            "IPAddress": "172.28.0.2",
+            "Aliases": ["whoami"]
+          }
+        }
+      }
+    }
+  ],
+  "discovered_origins": [
+    {
+      "container_id": "c_single_whoami_001",
+      "container_name": "whoami",
+      "hostname": "whoami.example.com",
+      "service_target": "http://whoami:80",
+      "origin_request": {
+        "noTLSVerify": false
+      },
+      "labels": {
+        "cf.tunnel.hostname": "whoami.example.com",
+        "cf.tunnel.service": "http://whoami:80"
+      }
+    }
+  ],
+  "remote_state": {
+    "tunnel_id": "00000000-0000-0000-0000-000000000001",
+    "tunnel_name": "primary-tunnel",
+    "zone_id": "zone_single_compose_123",
+    "tunnel_target": "00000000-0000-0000-0000-000000000001.cfargotunnel.com",
+    "existing_ingress_rules": [
+      {
+        "hostname": "whoami.example.com",
+        "service": "http://whoami:80",
+        "originRequest": {
+          "noTLSVerify": false
+        }
+      },
+      {
+        "service": "http_status:404"
+      }
+    ],
+    "existing_dns_records": [
+      {
+        "id": "dns_single_001",
+        "name": "whoami.example.com",
+        "type": "CNAME",
+        "content": "00000000-0000-0000-0000-000000000001.cfargotunnel.com",
+        "proxied": true,
+        "comment": "cf-tunnel-sync:primary-tunnel"
+      }
+    ]
+  },
+  "expected_plan_summary": {
+    "total_services_discovered": 1,
+    "ingress_creates": 0,
+    "ingress_updates": 0,
+    "ingress_deletes": 0,
+    "dns_creates": 0,
+    "dns_updates": 0,
+    "dns_deletes": 0,
+    "dns_protected": 1,
+    "unmanaged_skipped": 0,
+    "has_mutations": false,
+    "is_destructive": false
+  }
+}
