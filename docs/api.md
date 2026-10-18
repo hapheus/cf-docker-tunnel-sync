@@ -27,9 +27,10 @@ API and dashboard routes enforce authentication based on `DASHBOARD_AUTH_ENABLED
 | **Unauthenticated (Default Single-Compose)** | `DASHBOARD_AUTH_ENABLED=false` or unset with empty credentials | All endpoints accessible without credentials. |
 | **Fail-Closed Basic Auth** | `DASHBOARD_AUTH_ENABLED=true` with blank/missing credentials | **Rejects all requests with HTTP 401** and `WWW-Authenticate: Basic realm="Cloudflare Tunnel Sync Dashboard"`. Protects against accidental exposure when credentials fail to load. |
 | **Active Basic Auth** | `DASHBOARD_AUTH_ENABLED=true` with username & password set | Requires `Authorization: Basic <base64>` header matching configured credentials. |
+| **Prometheus Scraper Auth** | `METRICS_AUTH_ENABLED=true` with username & password set | Secures `GET /metrics` with HTTP Basic Authentication (`Basic realm="Prometheus Metrics"`). Defaults to `false` for 100% backward compatibility with unauthenticated scrapers. |
 
 > ℹ️ **Public Probes:**  
-> The liveness probe (`GET /health`), readiness probe (`GET /ready`), and Prometheus scraper (`GET /metrics`) are public unauthenticated diagnostic endpoints designed for container orchestrators and monitoring agents.
+> The liveness probe (`GET /health`), readiness probe (`GET /ready`), and Prometheus scraper (`GET /metrics`, when `METRICS_AUTH_ENABLED=false`) are public unauthenticated diagnostic endpoints designed for container orchestrators and monitoring agents.
 
 ---
 
@@ -75,16 +76,25 @@ Readiness probe for load balancers and orchestrator rollouts.
 #### `GET /metrics`
 Exposes system and reconciliation metrics in Prometheus text exposition format (version 0.0.4).
 
-- **Auth:** None (Public)
+- **Auth:** Unauthenticated by default; requires Basic Auth when `METRICS_AUTH_ENABLED=true` (reusing `DASHBOARD_USERNAME` / `DASHBOARD_PASSWORD`).
 - **Content-Type:** `text/plain; version=0.0.4; charset=utf-8`
 - **Sample Output:**
   ```text
-  # HELP cf_tunnel_sync_containers_managed Current number of containers managed by tunnel sync
-  # TYPE cf_tunnel_sync_containers_managed gauge
-  cf_tunnel_sync_containers_managed 2.0
-  # HELP cf_tunnel_sync_reconcile_total Total number of reconciliation cycles executed
-  # TYPE cf_tunnel_sync_reconcile_total counter
-  cf_tunnel_sync_reconcile_total{status="success"} 42.0
+  # HELP cf_tunnel_sync_runs_total Total count of synchronization loop runs
+  # TYPE cf_tunnel_sync_runs_total counter
+  cf_tunnel_sync_runs_total{status="success"} 42.0
+  # HELP cf_tunnel_sync_duration_seconds Duration in seconds of the most recent sync execution
+  # TYPE cf_tunnel_sync_duration_seconds gauge
+  cf_tunnel_sync_duration_seconds 0.125
+  # HELP cf_tunnel_sync_last_success_timestamp Unix timestamp of the most recent successful sync completion
+  # TYPE cf_tunnel_sync_last_success_timestamp gauge
+  cf_tunnel_sync_last_success_timestamp 1792311968.0
+  # HELP cf_tunnel_dns_operations_total Total DNS operations by type (create, update, delete, protect)
+  # TYPE cf_tunnel_dns_operations_total counter
+  cf_tunnel_dns_operations_total{operation="create"} 5.0
+  # HELP cf_tunnel_docker_connected 1 if Docker daemon is connected, 0 otherwise
+  # TYPE cf_tunnel_docker_connected gauge
+  cf_tunnel_docker_connected 1.0
   ```
 
 ---
@@ -120,6 +130,25 @@ Returns the complete operational sync state, discovered services, redacted crede
     "logs": [
       "2026-10-18 10:15:00 [INFO] Synchronization completed successfully."
     ],
+    "overview_metrics": {
+      "active_services": 1,
+      "discovered_services": 1,
+      "failed_services": 0,
+      "last_sync_duration_ms": 124.5,
+      "safety_tripped": false,
+      "api_connected": true,
+      "health_state": "healthy"
+    },
+    "alert_status": {
+      "configured": true,
+      "provider": "discord",
+      "last_delivery_success": true,
+      "last_delivery_time": 1792311900.0,
+      "consecutive_failures": 0,
+      "cooldown_active": false
+    },
+    "sync_history": [],
+    "events": [],
     "diagnostics": {
       "overall_status": "Healthy",
       "stages": {}
@@ -131,7 +160,87 @@ Returns the complete operational sync state, discovered services, redacted crede
 
 ---
 
-### 4. Reconciliation Change Plan & Preview
+### 4. Audit Events, History & Alerts
+
+#### `GET /api/events`
+Exposes the bounded structured event timeline with optional query filters (Issue #120).
+
+- **Auth:** Subject to `check_dashboard_auth`
+- **Query Parameters:**
+  - `limit` (int, default `100`, max `100`): Maximum entries to return.
+  - `severity` (string, optional): Filter by `info`, `warning`, or `error`.
+  - `service` (string, optional): Filter by target service name or container hostname.
+  - `q` (string, optional): Search query matched against message text, event type, or service.
+- **Status Code:** `200 OK`
+- **Response Schema (`application/json`):**
+  ```json
+  {
+    "events": [
+      {
+        "id": "evt-1792311968000-a1b2c3",
+        "timestamp": 1792311968.0,
+        "iso_time": "2026-10-18T10:15:00.000000+00:00",
+        "severity": "info",
+        "event_type": "DNS_CREATE",
+        "service": "app.example.com",
+        "message": "Created DNS CNAME record for app.example.com"
+      }
+    ],
+    "total": 1
+  }
+  ```
+
+#### `GET /api/history`
+Exposes the bounded ring-buffer (up to 20 entries) of historical sync cycle durations, completion statuses, and discovered service counts (Issue #119).
+
+- **Auth:** Subject to `check_dashboard_auth`
+- **Query Parameters:**
+  - `limit` (int, default `20`, max `20`): Maximum entries to return.
+- **Status Code:** `200 OK`
+- **Response Schema (`application/json`):**
+  ```json
+  {
+    "history": [
+      {
+        "timestamp": 1792311968.0,
+        "iso_time": "2026-10-18T10:15:00.000000+00:00",
+        "duration_ms": 125.4,
+        "status": "Active / Synced",
+        "services_count": 2,
+        "summary": {
+          "total_services_discovered": 2,
+          "dns_creates": 0,
+          "dns_updates": 0,
+          "dns_deletes": 0
+        }
+      }
+    ],
+    "total": 1
+  }
+  ```
+
+#### `GET /api/notifications/status`
+Exposes webhook notification dispatch telemetry, delivery outcomes, and cooldown status without revealing webhook secrets (Issue #121).
+
+- **Auth:** Subject to `check_dashboard_auth`
+- **Status Code:** `200 OK`
+- **Response Schema (`application/json`):**
+  ```json
+  {
+    "configured": true,
+    "provider": "discord",
+    "last_delivery_success": true,
+    "last_delivery_time": 1792311900.0,
+    "last_delivery_status": "HTTP 204 No Content",
+    "consecutive_failures": 0,
+    "cooldown_active": false,
+    "cooldown_seconds": 300.0
+  }
+  ```
+
+---
+
+### 5. Reconciliation Change Plan & Preview
 
 #### `GET /api/change-plan`
 Exposes the structured execution plan computed by the state-machine reconciler.

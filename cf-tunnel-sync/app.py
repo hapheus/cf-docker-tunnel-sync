@@ -11,6 +11,7 @@ import threading
 import time
 import urllib.parse
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Set
 
 import uvicorn
@@ -191,6 +192,27 @@ sync_state = {
     "last_change_plan": None,
     "safety_guard_tripped": False,
     "safety_details": None,
+    "sync_history": [],
+    "events": [],
+    "alert_status": {
+        "configured": False,
+        "provider": "none",
+        "last_delivery_success": None,
+        "last_delivery_time": None,
+        "last_delivery_status": None,
+        "consecutive_failures": 0,
+        "cooldown_active": False,
+        "cooldown_seconds": 300.0,
+    },
+    "overview_metrics": {
+        "active_services": 0,
+        "discovered_services": 0,
+        "failed_services": 0,
+        "last_sync_duration_ms": 0.0,
+        "safety_tripped": False,
+        "api_connected": True,
+        "health_state": "never_synced",
+    },
 }
 
 
@@ -202,6 +224,103 @@ def add_log(msg: str):
     sync_state["logs"].insert(0, entry)
     if len(sync_state["logs"]) > 100:
         sync_state["logs"].pop()
+
+
+def record_event(severity: str, event_type: str, service: str, message: str):
+    """Record structured event in bounded ring-buffer with redaction (Issue #120)."""
+    safe_msg = redact_sensitive_string(message)
+    now = time.time()
+    iso_time = datetime.now(timezone.utc).isoformat()
+    event_id = f"evt-{int(now * 1000)}-{os.urandom(3).hex()}"
+    evt = {
+        "id": event_id,
+        "timestamp": now,
+        "iso_time": iso_time,
+        "severity": severity.lower(),
+        "event_type": event_type,
+        "service": service or "-",
+        "message": safe_msg,
+    }
+    sync_state["events"].insert(0, evt)
+    if len(sync_state["events"]) > 100:
+        sync_state["events"].pop()
+
+
+def record_sync_history(duration_ms: float, status: str, services_count: int, summary: Optional[Dict[str, Any]] = None):
+    """Record sync cycle in bounded history ring-buffer (Issue #119)."""
+    now = time.time()
+    iso_time = datetime.now(timezone.utc).isoformat()
+    entry = {
+        "timestamp": now,
+        "iso_time": iso_time,
+        "duration_ms": round(duration_ms, 2),
+        "status": status,
+        "services_count": services_count,
+        "summary": summary or {},
+    }
+    sync_state["sync_history"].insert(0, entry)
+    if len(sync_state["sync_history"]) > 20:
+        sync_state["sync_history"].pop()
+
+
+def update_overview_metrics():
+    """Compute high-level summary overview metrics (Issue #117)."""
+    discovered = len(sync_state.get("discovered_services") or [])
+    active = 0
+    failed = 0
+    services = sync_state.get("services") or []
+    if isinstance(services, list):
+        for s in services:
+            st = s.get("status", "") if isinstance(s, dict) else ""
+            if "Active" in st or "Synced" in st:
+                active += 1
+            elif "Degraded" in st or "Error" in st or "Failed" in st:
+                failed += 1
+    elif isinstance(services, dict):
+        for s in services.values():
+            st = s.get("status", "") if isinstance(s, dict) else ""
+            if "Active" in st or "Synced" in st:
+                active += 1
+            elif "Degraded" in st or "Error" in st or "Failed" in st:
+                failed += 1
+
+    last_sync = sync_state.get("last_sync")
+    st_val = sync_state.get("status", "")
+    docker_ok = sync_state.get("docker_connected", True)
+    safety_tripped = sync_state.get("safety_guard_tripped", False)
+
+    if last_sync is None or st_val == "Initializing":
+        health_state = "never_synced"
+    elif not docker_ok:
+        health_state = "degraded"
+    elif safety_tripped or failed > 0 or "Error" in st_val or "Degraded" in st_val:
+        health_state = "degraded"
+    elif "Active" in st_val or "Synced" in st_val or st_val == "Waiting for changes...":
+        health_state = "healthy"
+    else:
+        health_state = "unknown"
+
+    last_duration_ms = 0.0
+    if sync_state.get("sync_history"):
+        last_duration_ms = sync_state["sync_history"][0].get("duration_ms", 0.0)
+
+    try:
+        from notifications import default_dispatcher
+
+        sync_state["alert_status"] = default_dispatcher.get_status()
+    except Exception:
+        pass
+
+    sync_state["overview_metrics"] = {
+        "active_services": active,
+        "discovered_services": discovered,
+        "failed_services": failed,
+        "last_sync_duration_ms": last_duration_ms,
+        "safety_tripped": safety_tripped,
+        "api_connected": docker_ok,
+        "health_state": health_state,
+    }
+    metrics_registry.set_gauge("cf_tunnel_docker_connected", 1.0 if docker_ok else 0.0)
 
 
 class UnixHTTPConnection(http.client.HTTPConnection):
@@ -1384,6 +1503,12 @@ def run_sync_logic():
                 f"{plan.summary.dns_deletes} deletes, {plan.summary.dns_protected} protected). "
                 "Dry-run active: skipping Cloudflare API updates."
             )
+            record_event(
+                "info",
+                "SYNC_DRY_RUN",
+                "sync",
+                f"Dry-run plan {plan.plan_id}: {plan.summary.total_services_discovered} origins evaluated",
+            )
             sync_state["status"] = "Active / Synced (Dry-Run)"
             sync_state["last_sync"] = time.strftime("%Y-%m-%d %H:%M:%S")
             return
@@ -1443,9 +1568,18 @@ def run_sync_logic():
                     data={"config": {"ingress": plan.final_ingress_rules}},
                 )
                 sync_state["_last_ingress"] = plan.final_ingress_rules
+                metrics_registry.record_ingress_op("update", 1.0)
+                record_event(
+                    "info",
+                    "INGRESS_UPDATE",
+                    "ingress",
+                    f"Updated Cloudflare Tunnel Ingress rules ({len(plan.final_ingress_rules)} routes)",
+                )
                 add_log("✅ Updated Cloudflare Tunnel Ingress rules")
             except Exception as e:
                 ingress_failed = True
+                metrics_registry.record_ingress_op("failed", 1.0)
+                record_event("error", "INGRESS_ERROR", "ingress", f"Failed to update Cloudflare Ingress rules: {e}")
                 add_log(f"❌ Failed to update Cloudflare Ingress rules: {e}")
 
         # 2. DNS Record Mutations
@@ -1462,6 +1596,13 @@ def run_sync_logic():
                     if change.target_comment:
                         payload["comment"] = change.target_comment
                     cf_api(f"/zones/{zone_id}/dns_records", token, method="POST", data=payload)
+                    metrics_registry.record_dns_op("create", 1.0)
+                    record_event(
+                        "info",
+                        "DNS_CREATE",
+                        change.hostname,
+                        f"Created DNS {change.record_type} record for {change.hostname}",
+                    )
                     add_log(f"➕ Created DNS record for {change.hostname}")
 
                 elif change.action == DnsActionType.UPDATE:
@@ -1480,6 +1621,13 @@ def run_sync_logic():
                         method="PUT",
                         data=payload,
                     )
+                    metrics_registry.record_dns_op("update", 1.0)
+                    record_event(
+                        "info",
+                        "DNS_UPDATE",
+                        change.hostname,
+                        f"Updated DNS record for {change.hostname} to {change.target_content}",
+                    )
                     add_log(f"🔄 Updated DNS record for {change.hostname}")
 
                 elif change.action == DnsActionType.DELETE:
@@ -1488,15 +1636,37 @@ def run_sync_logic():
                         token,
                         method="DELETE",
                     )
+                    metrics_registry.record_dns_op("delete", 1.0)
                     if "expired" in change.reason or "grace period" in change.reason:
+                        record_event(
+                            "info",
+                            "DNS_DELETE",
+                            change.hostname,
+                            f"Deleted obsolete DNS record for {change.hostname} after grace period expired",
+                        )
                         add_log(f"🗑️ Deleted obsolete DNS record for {change.hostname} after grace period expired")
                     else:
+                        record_event(
+                            "info",
+                            "DNS_DELETE",
+                            change.hostname,
+                            f"Deleted obsolete DNS record for {change.hostname}",
+                        )
                         add_log(f"🗑️ Deleted obsolete DNS record for {change.hostname}")
 
                 elif change.action == DnsActionType.PROTECT:
+                    metrics_registry.record_dns_op("protect", 1.0)
+                    record_event(
+                        "info",
+                        "DNS_PROTECT",
+                        change.hostname,
+                        f"Protected DNS record for {change.hostname} ({change.reason})",
+                    )
                     add_log(f"🛡️ Protected DNS record for {change.hostname} ({change.reason})")
             except Exception as e:
                 dns_failed = True
+                metrics_registry.record_dns_op("failed", 1.0)
+                record_event("error", "DNS_ERROR", change.hostname, f"DNS mutation failed for {change.hostname}: {e}")
                 add_log(f"❌ DNS mutation failed for {change.hostname}: {e}")
 
         # Truthful Per-Service Diagnostic Stage Updates (Issue #49)
@@ -1558,6 +1728,9 @@ def run_sync_logic():
 
         if ingress_failed or dns_failed or any(s.get("status") in ("Degraded", "Failed") for s in services):
             sync_state["status"] = "Degraded"
+            record_event(
+                "warning", "SYNC_DEGRADED", "sync", f"Sync completed with degraded services ({len(services)} services)"
+            )
             add_log("⚠️ Sync completed with degraded service states.")
             default_dispatcher.dispatch_sync(
                 event_type="SYNC_DEGRADED",
@@ -1568,6 +1741,7 @@ def run_sync_logic():
             )
         else:
             sync_state["status"] = "Active / Synced"
+            record_event("info", "SYNC_SUCCESS", "sync", f"Sync completed successfully with {len(services)} services")
             add_log("🎉 Sync completed successfully!")
 
         sync_state["last_sync"] = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -1589,6 +1763,12 @@ def run_sync_logic():
             "planned_deletions": planned_deletions,
             "limit": max_deletions,
         }
+        record_event(
+            "error",
+            "SAFETY_GUARD_TRIPPED",
+            "sync",
+            f"Blast-radius guard tripped: {planned_deletions} planned deletions exceed limit ({max_deletions})",
+        )
         sync_duration = time.time() - sync_start_time
         metrics_registry.record_sync_run(
             duration=sync_duration,
@@ -1613,6 +1793,7 @@ def run_sync_logic():
     except Exception as e:
         add_log(f"❌ Sync Error: {e}")
         sync_state["status"] = f"Error: {e}"
+        record_event("error", "SYNC_ERROR", "sync", f"Sync error: {e}")
         sync_duration = time.time() - sync_start_time
         metrics_registry.record_sync_run(
             duration=sync_duration,
@@ -1628,7 +1809,21 @@ def run_sync_logic():
             details={"error": str(e)},
         )
     finally:
-        sync_lock.release()
+        try:
+            sync_duration_ms = (time.time() - sync_start_time) * 1000.0
+            services_cnt = len(services) if "services" in locals() and isinstance(services, list) else 0
+            summary_info = {}
+            if "plan" in locals() and hasattr(plan, "summary"):
+                summary_info = plan.summary.model_dump() if hasattr(plan.summary, "model_dump") else plan.summary.dict()
+            record_sync_history(
+                duration_ms=sync_duration_ms,
+                status=sync_state.get("status", "unknown"),
+                services_count=services_cnt,
+                summary=summary_info,
+            )
+            update_overview_metrics()
+        finally:
+            sync_lock.release()
 
 
 event_listener_thread: Optional[threading.Thread] = None
@@ -1751,6 +1946,38 @@ def check_dashboard_auth(credentials: Optional[HTTPBasicCredentials] = Depends(s
     return True
 
 
+def check_metrics_auth(credentials: Optional[HTTPBasicCredentials] = Depends(security)) -> bool:
+    """Validate HTTP Basic Auth for /metrics when METRICS_AUTH_ENABLED=true (Issue #123).
+
+    Defaults to false to maintain 100% backward compatibility with existing Prometheus scrapers.
+    """
+    metrics_auth_env = os.getenv("METRICS_AUTH_ENABLED", "false").strip().lower()
+    if metrics_auth_env not in ("true", "1", "yes"):
+        return True
+
+    user = os.getenv("DASHBOARD_USERNAME", os.getenv("BASIC_AUTH_USERNAME", "")).strip()
+    pwd = os.getenv("DASHBOARD_PASSWORD", os.getenv("BASIC_AUTH_PASSWORD", "")).strip()
+
+    if not user or not pwd or not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": 'Basic realm="Prometheus Metrics"'},
+        )
+
+    is_user_ok = secrets.compare_digest(credentials.username.encode("utf-8"), user.encode("utf-8"))
+    is_pwd_ok = secrets.compare_digest(credentials.password.encode("utf-8"), pwd.encode("utf-8"))
+
+    if not (is_user_ok and is_pwd_ok):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": 'Basic realm="Prometheus Metrics"'},
+        )
+
+    return True
+
+
 def is_dashboard_enabled() -> bool:
     val = os.getenv("DASHBOARD_ENABLED", os.getenv("EMBEDDED_DASHBOARD_ENABLED", "true")).strip().lower()
     return val not in ("false", "0", "no", "disabled", "off")
@@ -1861,12 +2088,62 @@ def api_sync_preview(authenticated: bool = Depends(check_dashboard_auth)):
 
 @app.get("/api/status")
 def api_status(authenticated: bool = Depends(check_dashboard_auth)):
+    update_overview_metrics()
     return JSONResponse(sanitize_sync_state(sync_state))
 
 
+@app.get("/api/events")
+def api_events(
+    severity: Optional[str] = None,
+    service: Optional[str] = None,
+    q: Optional[str] = None,
+    limit: int = 100,
+    authenticated: bool = Depends(check_dashboard_auth),
+):
+    """Retrieve audit event timeline entries with optional severity, service, and text filters (Issue #120)."""
+    events = list(sync_state.get("events", []))
+    if severity:
+        sev_lower = severity.strip().lower()
+        events = [e for e in events if e.get("severity", "").lower() == sev_lower]
+    if service:
+        svc_lower = service.strip().lower()
+        events = [e for e in events if svc_lower in e.get("service", "").lower()]
+    if q:
+        query = q.strip().lower()
+        events = [
+            e
+            for e in events
+            if query in e.get("message", "").lower()
+            or query in e.get("event_type", "").lower()
+            or query in e.get("service", "").lower()
+        ]
+    limit = max(1, min(limit, 100))
+    return JSONResponse({"events": events[:limit], "total": len(events)})
+
+
+@app.get("/api/history")
+def api_history(limit: int = 20, authenticated: bool = Depends(check_dashboard_auth)):
+    """Retrieve execution duration and status history ring-buffer entries (Issue #119)."""
+    history = list(sync_state.get("sync_history", []))
+    limit = max(1, min(limit, 20))
+    return JSONResponse({"history": history[:limit], "total": len(history)})
+
+
+@app.get("/api/notifications/status")
+def api_notifications_status(authenticated: bool = Depends(check_dashboard_auth)):
+    """Retrieve webhook notification dispatch status and cooldown state (Issue #121)."""
+    try:
+        from notifications import default_dispatcher
+
+        sync_state["alert_status"] = default_dispatcher.get_status()
+    except Exception:
+        pass
+    return JSONResponse(sync_state.get("alert_status", {}))
+
+
 @app.get("/metrics", response_class=PlainTextResponse)
-def get_prometheus_metrics():
-    """Prometheus exposition format endpoint (Issue #55)."""
+def get_prometheus_metrics(authenticated: bool = Depends(check_metrics_auth)):
+    """Prometheus exposition format endpoint (Issue #55, #116, #123)."""
     return PlainTextResponse(
         metrics_registry.generate_exposition(),
         media_type="text/plain; version=0.0.4; charset=utf-8",

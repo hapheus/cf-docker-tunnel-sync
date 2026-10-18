@@ -42,7 +42,10 @@
                 </h1>
                 <p class="text-slate-400 text-sm mt-1">Automatic Docker service discovery & DNS synchronization via Cloudflare Zero Trust</p>
             </div>
-            <div class="flex items-center gap-3">
+            <div class="flex items-center gap-3 flex-wrap">
+                <span id="webhook-badge" class="px-3 py-1 text-xs font-semibold rounded-full bg-slate-800 text-slate-400 border border-slate-700 flex items-center gap-1.5" title="Webhook Alerts Status">
+                    <span class="w-2 h-2 rounded-full bg-slate-500"></span> Alerts: Inactive
+                </span>
                 <span id="status-badge" class="px-3 py-1 text-xs font-semibold rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">
                     Initializing...
                 </span>
@@ -53,30 +56,74 @@
             </div>
         </header>
 
-        <!-- Main Stats Grid -->
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 my-8">
+        <!-- Overview Metric Cards (Issue #117) -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 my-8">
+            <!-- Health State Card -->
             <div class="bg-slate-900/60 backdrop-blur border border-slate-800 rounded-xl p-5 shadow-sm">
-                <div class="text-xs uppercase tracking-wider text-slate-500 font-bold">Tunnel Name</div>
-                <div class="text-xl font-bold text-slate-100 mt-2" id="tunnel-name">-</div>
-                <div class="text-xs text-slate-400 mt-1 font-mono" id="tunnel-id">ID: -</div>
+                <div class="flex items-center justify-between">
+                    <div class="text-xs uppercase tracking-wider text-slate-400 font-bold">Health State</div>
+                    <span id="health-icon" class="text-lg">🔄</span>
+                </div>
+                <div class="text-2xl font-extrabold text-slate-100 mt-2" id="health-state-text">Checking...</div>
+                <div class="text-xs text-slate-400 mt-1 flex items-center gap-2">
+                    <span id="safety-guard-status" class="font-mono text-emerald-400">Safeguards: Active</span>
+                </div>
             </div>
 
+            <!-- Active & Discovered Services Card -->
             <div class="bg-slate-900/60 backdrop-blur border border-slate-800 rounded-xl p-5 shadow-sm">
-                <div class="text-xs uppercase tracking-wider text-slate-500 font-bold">Domain Name</div>
-                <div class="text-xl font-bold text-slate-100 mt-2" id="domain-name">-</div>
-                <div class="text-xs text-orange-400 mt-1">Cloudflare Managed</div>
+                <div class="flex items-center justify-between">
+                    <div class="text-xs uppercase tracking-wider text-slate-400 font-bold">Discovered Services</div>
+                    <span class="text-lg">🐳</span>
+                </div>
+                <div class="text-2xl font-extrabold text-slate-100 mt-2" id="services-summary">0 Active</div>
+                <div class="text-xs text-slate-400 mt-1" id="services-breakdown">0 discovered · 0 failed</div>
             </div>
 
+            <!-- Last Sync Duration & Latency Card (Issue #119) -->
             <div class="bg-slate-900/60 backdrop-blur border border-slate-800 rounded-xl p-5 shadow-sm">
-                <div class="text-xs uppercase tracking-wider text-slate-500 font-bold">Last Synchronization</div>
+                <div class="flex items-center justify-between">
+                    <div class="text-xs uppercase tracking-wider text-slate-400 font-bold">Last Synchronization</div>
+                    <span class="text-lg">⚡</span>
+                </div>
                 <div class="text-xl font-bold text-slate-100 mt-2" id="last-sync">-</div>
-                <div class="text-xs text-slate-400 mt-1">Interval: every 30s</div>
+                <div class="text-xs text-slate-400 mt-1 font-mono" id="sync-duration-text">Duration: 0 ms</div>
+            </div>
+
+            <!-- Tunnel & Domain Metadata Card -->
+            <div class="bg-slate-900/60 backdrop-blur border border-slate-800 rounded-xl p-5 shadow-sm">
+                <div class="flex items-center justify-between">
+                    <div class="text-xs uppercase tracking-wider text-slate-400 font-bold">Tunnel & Domain</div>
+                    <span class="text-lg">☁️</span>
+                </div>
+                <div class="text-base font-bold text-slate-100 mt-2 truncate" id="tunnel-name">-</div>
+                <div class="text-xs text-slate-400 mt-1 font-mono truncate" id="tunnel-id">ID: -</div>
+                <div class="text-xs text-orange-400 mt-0.5 truncate" id="domain-name">-</div>
             </div>
         </div>
 
-        <!-- Layout -->
+        <!-- Sync Duration Performance & History Sparkline (Issue #119) -->
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-8">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+                <div>
+                    <h2 class="text-base font-bold text-slate-200 flex items-center gap-2">
+                        <span>📊 Sync Execution History & Duration Trend</span>
+                    </h2>
+                    <p class="text-xs text-slate-400 mt-0.5">Duration and completion status across recent sync iterations</p>
+                </div>
+                <div class="flex items-center gap-3 text-xs font-mono text-slate-400">
+                    <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-emerald-500 inline-block"></span> Success</span>
+                    <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-amber-500 inline-block"></span> Degraded</span>
+                    <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-rose-500 inline-block"></span> Error / Blocked</span>
+                </div>
+            </div>
+            <div id="history-chart-container" class="w-full bg-slate-950 border border-slate-800/80 rounded-lg p-3 flex items-end gap-1.5 h-24 overflow-x-auto">
+                <div class="text-xs text-slate-500 m-auto">Recording sync cycles...</div>
+            </div>
+        </div>
+
+        <!-- Discovered Containers & Diagnostic Pipeline (Issue #122) -->
         <div class="space-y-8">
-            <!-- Discovered Hostnames Section -->
             <div class="bg-slate-900 border border-slate-800 rounded-xl p-6">
                 <h2 class="text-lg font-bold mb-4 flex items-center gap-2">
                     <span>🐳 Docker Container Status & Cloudflare Routing</span>
@@ -89,7 +136,7 @@
                                 <th class="px-4 py-3">Image</th>
                                 <th class="px-4 py-3">Status</th>
                                 <th class="px-4 py-3">Subdomain / Public Hostname</th>
-                                <th class="px-4 py-3">Cloudflare DNS</th>
+                                <th class="px-4 py-3">Cloudflare DNS & Diagnostics</th>
                             </tr>
                         </thead>
                         <tbody id="hosts-tbody" class="divide-y divide-slate-800 text-slate-300 font-mono text-xs">
@@ -101,13 +148,28 @@
                 </div>
             </div>
 
-            <!-- Live Log Panel -->
+            <!-- Structured Event Timeline (Issue #120) -->
             <div class="bg-slate-900 border border-slate-800 rounded-xl p-6">
-                <h2 class="text-lg font-bold mb-4 flex items-center justify-between">
-                    <span>📜 Live Event Log</span>
-                    <span class="text-xs font-mono text-slate-500">Auto-refresh</span>
-                </h2>
-                <div id="logs-container" class="bg-slate-950 font-mono text-xs p-4 rounded-lg h-60 overflow-y-auto space-y-1 text-slate-300 border border-slate-800/80">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
+                    <div>
+                        <h2 class="text-lg font-bold flex items-center gap-2">
+                            <span>📜 Audit Event Timeline</span>
+                        </h2>
+                        <p class="text-xs text-slate-400 mt-0.5">Chronological synchronization events, mutations, and safeguard actions</p>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <div class="relative">
+                            <input type="text" id="event-search-input" placeholder="Search events..." oninput="renderEventsTimeline()" class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-orange-500 w-44 sm:w-56" />
+                        </div>
+                        <select id="event-severity-select" onchange="renderEventsTimeline()" class="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-orange-500">
+                            <option value="">All Severities</option>
+                            <option value="info">Info</option>
+                            <option value="warning">Warning</option>
+                            <option value="error">Error</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="events-timeline-container" class="bg-slate-950 font-mono text-xs p-4 rounded-lg h-72 overflow-y-auto space-y-2 text-slate-300 border border-slate-800/80">
                     <div class="text-slate-500">Waiting for events...</div>
                 </div>
             </div>
@@ -115,6 +177,8 @@
     </div>
 
     <script>
+        let cachedState = null;
+
         function escapeHtml(str) {
             if (str === null || str === undefined) return '';
             return String(str)
@@ -149,6 +213,159 @@
             return '#';
         }
 
+        function renderHistoryChart(history) {
+            const container = document.getElementById('history-chart-container');
+            if (!container) return;
+            while (container.firstChild) {
+                container.removeChild(container.firstChild);
+            }
+            if (!history || history.length === 0) {
+                const empty = document.createElement('div');
+                empty.className = 'text-xs text-slate-500 m-auto font-sans';
+                empty.textContent = 'No sync cycles recorded yet.';
+                container.appendChild(empty);
+                return;
+            }
+
+            const items = [...history].reverse();
+            let maxDuration = 1.0;
+            items.forEach(item => {
+                if (item.duration_ms && item.duration_ms > maxDuration) {
+                    maxDuration = item.duration_ms;
+                }
+            });
+
+            items.forEach(item => {
+                const barWrapper = document.createElement('div');
+                barWrapper.className = 'flex-1 flex flex-col items-center justify-end h-full min-w-[12px] group relative cursor-pointer';
+
+                const duration = item.duration_ms || 0.0;
+                const pct = Math.max(8, Math.min(100, Math.round((duration / maxDuration) * 100)));
+
+                const bar = document.createElement('div');
+                bar.style.height = pct + '%';
+                bar.className = 'w-full rounded-t transition-all ';
+
+                const st = (item.status || '').toLowerCase();
+                if (st.includes('active') || st.includes('synced') || st === 'success') {
+                    bar.className += 'bg-emerald-500 group-hover:bg-emerald-400';
+                } else if (st.includes('degraded') || st.includes('warning')) {
+                    bar.className += 'bg-amber-500 group-hover:bg-amber-400';
+                } else {
+                    bar.className += 'bg-rose-500 group-hover:bg-rose-400';
+                }
+
+                const timeStr = item.iso_time ? item.iso_time.split('T')[1].substring(0, 8) : '';
+                barWrapper.title = `${timeStr} UTC · ${duration.toFixed(1)}ms · ${item.status || 'unknown'} (${item.services_count || 0} origins)`;
+
+                barWrapper.appendChild(bar);
+                container.appendChild(barWrapper);
+            });
+        }
+
+        function renderEventsTimeline() {
+            const container = document.getElementById('events-timeline-container');
+            if (!container || !cachedState) return;
+
+            const searchInput = document.getElementById('event-search-input');
+            const q = searchInput ? searchInput.value.trim().toLowerCase() : '';
+
+            const severitySelect = document.getElementById('event-severity-select');
+            const filterSeverity = severitySelect ? severitySelect.value.trim().toLowerCase() : '';
+
+            let events = cachedState.events || [];
+
+            if (events.length === 0 && cachedState.logs && cachedState.logs.length > 0) {
+                while (container.firstChild) {
+                    container.removeChild(container.firstChild);
+                }
+                cachedState.logs.forEach(log => {
+                    if (q && !log.toLowerCase().includes(q)) return;
+                    const div = document.createElement('div');
+                    div.className = 'text-slate-300';
+                    div.textContent = log;
+                    container.appendChild(div);
+                });
+                return;
+            }
+
+            if (filterSeverity) {
+                events = events.filter(e => (e.severity || '').toLowerCase() === filterSeverity);
+            }
+            if (q) {
+                events = events.filter(e => {
+                    const msg = (e.message || '').toLowerCase();
+                    const svc = (e.service || '').toLowerCase();
+                    const typ = (e.event_type || '').toLowerCase();
+                    return msg.includes(q) || svc.includes(q) || typ.includes(q);
+                });
+            }
+
+            while (container.firstChild) {
+                container.removeChild(container.firstChild);
+            }
+
+            if (events.length === 0) {
+                const empty = document.createElement('div');
+                empty.className = 'text-xs text-slate-500 py-4 text-center font-sans';
+                empty.textContent = 'No matching audit events found.';
+                container.appendChild(empty);
+                return;
+            }
+
+            events.forEach(evt => {
+                const row = document.createElement('div');
+                row.className = 'p-2 rounded bg-slate-900/60 border border-slate-800 flex items-start gap-3 hover:bg-slate-900';
+
+                const sevBadge = document.createElement('span');
+                const sev = (evt.severity || 'info').toLowerCase();
+                if (sev === 'error') {
+                    sevBadge.className = 'px-1.5 py-0.5 rounded text-[10px] font-bold uppercase bg-rose-500/20 text-rose-400 border border-rose-500/30';
+                    sevBadge.textContent = 'ERR';
+                } else if (sev === 'warning' || sev === 'warn') {
+                    sevBadge.className = 'px-1.5 py-0.5 rounded text-[10px] font-bold uppercase bg-amber-500/20 text-amber-400 border border-amber-500/30';
+                    sevBadge.textContent = 'WARN';
+                } else {
+                    sevBadge.className = 'px-1.5 py-0.5 rounded text-[10px] font-bold uppercase bg-sky-500/20 text-sky-400 border border-sky-500/30';
+                    sevBadge.textContent = 'INFO';
+                }
+                row.appendChild(sevBadge);
+
+                const contentWrapper = document.createElement('div');
+                contentWrapper.className = 'flex-1 min-w-0';
+
+                const topMeta = document.createElement('div');
+                topMeta.className = 'flex items-center gap-2 text-[11px] text-slate-400';
+
+                const typeSpan = document.createElement('span');
+                typeSpan.className = 'font-semibold text-slate-200';
+                typeSpan.textContent = evt.event_type || 'SYNC';
+                topMeta.appendChild(typeSpan);
+
+                if (evt.service && evt.service !== '-') {
+                    const svcSpan = document.createElement('span');
+                    svcSpan.className = 'text-orange-400/90';
+                    svcSpan.textContent = `[${evt.service}]`;
+                    topMeta.appendChild(svcSpan);
+                }
+
+                const timeSpan = document.createElement('span');
+                timeSpan.className = 'text-slate-500 ml-auto font-mono text-[10px]';
+                timeSpan.textContent = evt.iso_time ? evt.iso_time.replace('T', ' ').substring(0, 19) + ' UTC' : '';
+                topMeta.appendChild(timeSpan);
+
+                contentWrapper.appendChild(topMeta);
+
+                const msgDiv = document.createElement('div');
+                msgDiv.className = 'text-slate-300 text-xs mt-0.5 break-words';
+                msgDiv.textContent = evt.message || '';
+                contentWrapper.appendChild(msgDiv);
+
+                row.appendChild(contentWrapper);
+                container.appendChild(row);
+            });
+        }
+
         async function fetchStatus() {
             try {
                 const res = await fetch('/api/status');
@@ -157,7 +374,9 @@
                     return;
                 }
                 const data = await res.json();
+                cachedState = data;
 
+                // 1. Header Badges
                 const statusBadge = document.getElementById('status-badge');
                 if (statusBadge) {
                     statusBadge.textContent = data.status || 'Initializing...';
@@ -170,6 +389,91 @@
                     }
                 }
 
+                const webhookBadge = document.getElementById('webhook-badge');
+                if (webhookBadge && data.alert_status) {
+                    while (webhookBadge.firstChild) {
+                        webhookBadge.removeChild(webhookBadge.firstChild);
+                    }
+                    const ast = data.alert_status;
+                    const dot = document.createElement('span');
+                    dot.className = 'w-2 h-2 rounded-full';
+                    if (ast.configured) {
+                        const prov = (ast.provider || 'webhook').toUpperCase();
+                        if (ast.cooldown_active) {
+                            webhookBadge.className = 'px-3 py-1 text-xs font-semibold rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center gap-1.5';
+                            dot.className += ' bg-amber-400 animate-pulse';
+                            webhookBadge.appendChild(dot);
+                            webhookBadge.appendChild(document.createTextNode(` Alerts: ${prov} (Cooldown)`));
+                        } else {
+                            webhookBadge.className = 'px-3 py-1 text-xs font-semibold rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5';
+                            dot.className += ' bg-emerald-400';
+                            webhookBadge.appendChild(dot);
+                            webhookBadge.appendChild(document.createTextNode(` Alerts: ${prov} (Active)`));
+                        }
+                    } else {
+                        webhookBadge.className = 'px-3 py-1 text-xs font-semibold rounded-full bg-slate-800 text-slate-400 border border-slate-700 flex items-center gap-1.5';
+                        dot.className += ' bg-slate-500';
+                        webhookBadge.appendChild(dot);
+                        webhookBadge.appendChild(document.createTextNode(' Alerts: None'));
+                    }
+                }
+
+                // 2. Overview Cards (Issue #117)
+                const overview = data.overview_metrics || {};
+                const healthText = document.getElementById('health-state-text');
+                const healthIcon = document.getElementById('health-icon');
+                if (healthText && healthIcon) {
+                    const hs = overview.health_state || 'unknown';
+                    if (hs === 'healthy') {
+                        healthText.textContent = 'Healthy';
+                        healthText.className = 'text-2xl font-extrabold text-emerald-400 mt-2';
+                        healthIcon.textContent = '✅';
+                    } else if (hs === 'never_synced') {
+                        healthText.textContent = 'Never Synced';
+                        healthText.className = 'text-2xl font-extrabold text-slate-400 mt-2';
+                        healthIcon.textContent = '⏳';
+                    } else if (hs === 'degraded') {
+                        healthText.textContent = 'Degraded';
+                        healthText.className = 'text-2xl font-extrabold text-amber-400 mt-2';
+                        healthIcon.textContent = '⚠️';
+                    } else {
+                        healthText.textContent = hs.toUpperCase();
+                        healthText.className = 'text-2xl font-extrabold text-rose-400 mt-2';
+                        healthIcon.textContent = '❌';
+                    }
+                }
+
+                const safetyStatus = document.getElementById('safety-guard-status');
+                if (safetyStatus) {
+                    if (data.safety_guard_tripped) {
+                        safetyStatus.textContent = '⚠️ Safeguard: BLAST LIMIT TRIPPED';
+                        safetyStatus.className = 'font-mono text-rose-400 font-bold';
+                    } else {
+                        safetyStatus.textContent = 'Safeguards: Normal';
+                        safetyStatus.className = 'font-mono text-emerald-400';
+                    }
+                }
+
+                const svcSummary = document.getElementById('services-summary');
+                const svcBreakdown = document.getElementById('services-breakdown');
+                if (svcSummary && svcBreakdown) {
+                    const act = overview.active_services || 0;
+                    const disc = overview.discovered_services || 0;
+                    const fail = overview.failed_services || 0;
+                    svcSummary.textContent = `${act} Active`;
+                    svcBreakdown.textContent = `${disc} discovered · ${fail} failed`;
+                }
+
+                const syncDur = document.getElementById('sync-duration-text');
+                const lastSyncEl = document.getElementById('last-sync');
+                if (syncDur) {
+                    const ms = overview.last_sync_duration_ms || 0.0;
+                    syncDur.textContent = `Duration: ${ms.toFixed(1)} ms`;
+                }
+                if (lastSyncEl) {
+                    lastSyncEl.textContent = data.last_sync || 'Never';
+                }
+
                 const elTunnelName = document.getElementById('tunnel-name');
                 if (elTunnelName) elTunnelName.textContent = data.tunnel_name || '-';
 
@@ -179,9 +483,10 @@
                 const elDomainName = document.getElementById('domain-name');
                 if (elDomainName) elDomainName.textContent = data.domain_name || '-';
 
-                const elLastSync = document.getElementById('last-sync');
-                if (elLastSync) elLastSync.textContent = data.last_sync || 'Never';
+                // 3. Render Sync History Sparkline Chart (Issue #119)
+                renderHistoryChart(data.sync_history || []);
 
+                // 4. Render Discovered Containers Table & Diagnostics (Issue #122)
                 const tbody = document.getElementById('hosts-tbody');
                 if (tbody) {
                     while (tbody.firstChild) {
@@ -297,6 +602,8 @@
                                         { key: 'ORIGIN_HEALTH', short: 'HLT' }
                                     ];
 
+                                    let actionableHint = null;
+
                                     stageLabels.forEach(s => {
                                         const stageData = c.stages[s.key] || { status: 'PENDING', message: '' };
                                         const pill = document.createElement('span');
@@ -305,17 +612,30 @@
                                             pill.className += 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30';
                                         } else if (stageData.status === 'WARNING') {
                                             pill.className += 'bg-amber-500/20 text-amber-300 border-amber-500/30';
+                                            if (!actionableHint && stageData.message) {
+                                                actionableHint = `[${s.short}] ${stageData.message}`;
+                                            }
                                         } else if (stageData.status === 'FAILED') {
-                                            pill.className += 'bg-rose-500/20 text-rose-300 border-rose-500/30';
+                                            pill.className += 'bg-rose-500/20 text-rose-300 border-rose-500/30 font-bold';
+                                            if (!actionableHint && stageData.message) {
+                                                actionableHint = `[${s.short}] ${stageData.message}`;
+                                            }
                                         } else {
                                             pill.className += 'bg-slate-500/20 text-slate-400 border-slate-500/30';
                                         }
                                         pill.textContent = s.short;
-                                        pill.title = s.key + ': ' + stageData.status + ' (' + stageData.message + ')';
+                                        pill.title = `${s.key}: ${stageData.status} - ${stageData.message}`;
                                         stagesDiv.appendChild(pill);
                                     });
 
                                     statusWrapper.appendChild(stagesDiv);
+
+                                    if (actionableHint) {
+                                        const hintDiv = document.createElement('div');
+                                        hintDiv.className = 'text-[11px] text-amber-400/90 font-sans mt-0.5';
+                                        hintDiv.textContent = `💡 Hint: ${actionableHint}`;
+                                        statusWrapper.appendChild(hintDiv);
+                                    }
                                 }
 
                                 tdDns.appendChild(statusWrapper);
@@ -356,19 +676,9 @@
                     }
                 }
 
-                // Logs container - safe DOM construction
-                const logContainer = document.getElementById('logs-container');
-                if (logContainer && data.logs && Array.isArray(data.logs)) {
-                    while (logContainer.firstChild) {
-                        logContainer.removeChild(logContainer.firstChild);
-                    }
-                    data.logs.forEach(log => {
-                        const div = document.createElement('div');
-                        div.textContent = log;
-                        logContainer.appendChild(div);
-                    });
-                    logContainer.scrollTop = logContainer.scrollHeight;
-                }
+                // 5. Render Events Timeline (Issue #120)
+                renderEventsTimeline();
+
             } catch (err) {
                 console.error("Fetch status error:", err);
             }

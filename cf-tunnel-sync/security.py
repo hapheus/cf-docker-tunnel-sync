@@ -20,6 +20,7 @@ RE_GENERIC_WEBHOOK_SECRET = re.compile(
 RE_JWT_TUNNEL_TOKEN = re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b")
 RE_HEX_SECRET_32_64 = re.compile(r"(?i)\b(?:secret|token|password|auth)[:=]\s*([a-f0-9]{32,64})\b")
 RE_PARAM_CREDENTIAL = re.compile(r"(?i)\b(api_token|token|password|secret|auth_token|client_secret)=([^\s&'\"]+)")
+RE_CF_TOKEN = re.compile(r"\bcf_pat_[A-Za-z0-9_\-]+\b", re.IGNORECASE)
 
 SENSITIVE_KEY_SUBSTRINGS = (
     "token",
@@ -54,6 +55,9 @@ def redact_sensitive_string(text: str) -> str:
 
     # Redact key-value credentials (token=xyz, password=xyz)
     text = RE_PARAM_CREDENTIAL.sub(r"\1=[REDACTED]", text)
+
+    # Redact Cloudflare Personal Access Tokens
+    text = RE_CF_TOKEN.sub("[REDACTED]", text)
 
     return text
 
