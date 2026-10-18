@@ -45,8 +45,12 @@ This document provides a comprehensive reference for all environment variables s
 
 | Variable | Required | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `MASS_DELETION_LIMIT` | Optional | `3` | Maximum number of route/DNS deletions allowed in a single synchronization cycle. Protects against accidental mass removal if Docker daemon restarts or containers temporarily stop. |
+| `MAX_DELETIONS_PER_SYNC` | Optional | `3` | Maximum number of route/DNS deletions allowed in a single synchronization cycle. Protects against accidental mass removal if Docker daemon restarts or containers temporarily stop. *(Alias: `MASS_DELETION_LIMIT`)* |
+| `MAX_DELETION_RATIO` | Optional | — | Maximum percentage of routes that can be deleted in a single cycle (e.g., `0.50` for 50%). If exceeded, trips blast-radius protection. |
 | `ALLOW_MASS_DELETIONS` | Optional | `false` | Circuit breaker override. Set to `true` only during deliberate mass teardowns or decommissioning of multiple services simultaneously. |
+| `DNS_CLEANUP_GRACE_PERIOD` | Optional | `300` | Duration in seconds to tombstone stopped containers before removing their Cloudflare Tunnel Ingress rule and managed DNS record. |
+| `DNS_IMMEDIATE_CLEANUP` | Optional | `false` | When `true`, immediately removes DNS records upon container shutdown, skipping the tombstone grace period. |
+| `OWNERSHIP_POLICY` | Optional | `adopt_and_manage` | Ownership policy for Cloudflare DNS records: <br>• `adopt_and_manage` (default): tags matching unmanaged CNAMEs and manages them.<br>• `strict_tagged_only`: only mutates/deletes records explicitly tagged by this tunnel.<br>• `legacy_unrestricted`: backward compatibility mode for unmanaged legacy records. |
 
 ---
 

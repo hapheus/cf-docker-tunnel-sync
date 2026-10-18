@@ -294,6 +294,76 @@ def compute_change_plan(
     expected_tag = tagger.format_comment()
     target_cname = remote.tunnel_target
 
+    # SAFE-02 Invariant: Fail-closed on Docker inventory error/degradation
+    if not snapshot.docker_ok:
+        ingress_changes: List[PlannedIngressChange] = []
+        final_ingress_origins: List[Dict[str, Any]] = []
+        for rule in remote.existing_ingress_rules:
+            if rule.get("service") != "http_status:404":
+                final_ingress_origins.append(rule)
+                ingress_changes.append(
+                    PlannedIngressChange(
+                        action=IngressActionType.NOOP,
+                        hostname=rule.get("hostname"),
+                        service=rule.get("service", ""),
+                        origin_request=rule.get("originRequest"),
+                        reason="Docker discovery degraded: preserving existing ingress rule (fail-closed)",
+                    )
+                )
+
+        final_ingress_rules = sorted(final_ingress_origins, key=lambda r: r.get("hostname", ""))
+        final_ingress_rules.append({"service": "http_status:404"})
+
+        dns_changes: List[PlannedDnsChange] = []
+        for rec in remote.existing_dns_records:
+            h = rec.get("name")
+            if not h:
+                continue
+            rec_status = tagger.parse_status(rec, target_cname, is_active_local=False)
+            dns_changes.append(
+                PlannedDnsChange(
+                    action=DnsActionType.PROTECT,
+                    hostname=h,
+                    record_id=rec.get("id"),
+                    current_content=rec.get("content"),
+                    target_content=rec.get("content"),
+                    proxied=rec.get("proxied", True),
+                    ttl=rec.get("ttl", 1),
+                    current_comment=rec.get("comment"),
+                    target_comment=rec.get("comment"),
+                    ownership_status=rec_status,
+                    reason="Docker discovery degraded: preserving DNS record (fail-closed)",
+                )
+            )
+
+        summary = ChangePlanSummary(
+            total_services_discovered=0,
+            ingress_creates=0,
+            ingress_updates=0,
+            ingress_deletes=0,
+            dns_creates=0,
+            dns_updates=0,
+            dns_deletes=0,
+            dns_protected=len(dns_changes),
+            unmanaged_skipped=len(dns_changes),
+            has_mutations=False,
+            is_destructive=False,
+        )
+
+        return ChangePlan(
+            plan_id=plan_id,
+            timestamp=current_time,
+            tunnel_id=remote.tunnel_id,
+            zone_id=remote.zone_id,
+            dry_run=dry_run,
+            ingress_changes=ingress_changes,
+            dns_changes=dns_changes,
+            final_ingress_rules=final_ingress_rules,
+            tombstones_to_set={},
+            tombstones_to_clear=[],
+            summary=summary,
+        )
+
     # 1. Map active discovered origins by normalized hostname
     active_origins_by_host: Dict[str, DiscoveredOrigin] = {}
     for o in snapshot.origins:
@@ -596,15 +666,19 @@ def compute_change_plan(
         status = tagger.parse_status(rec, target_cname, is_active_local=False)
         rec_id = rec.get("id")
 
-        is_known_managed = (
-            status == OwnershipStatus.OWNED
-            or host in existing_ingress_by_host
-            or host in tombstones
-            or policy == OwnershipPolicy.LEGACY_UNRESTRICTED
-            or (immediate_cleanup and rec_content == target_cname)
+        # SAFE-01 Invariant: Only records explicitly verified as OWNED (matching tunnel comment tag
+        # and tunnel target) can ever be planned for automated deletion. Unmanaged, foreign, or
+        # unrelated records must strictly be protected and never deleted.
+        is_known_managed = status == OwnershipStatus.OWNED or (
+            policy == OwnershipPolicy.LEGACY_UNRESTRICTED
+            and (
+                host in existing_ingress_by_host
+                or host in tombstones
+                or (immediate_cleanup and rec_content == target_cname)
+            )
         )
 
-        if is_known_managed and status in (OwnershipStatus.OWNED, OwnershipStatus.UNMANAGED):
+        if is_known_managed and (status == OwnershipStatus.OWNED or policy == OwnershipPolicy.LEGACY_UNRESTRICTED):
             if immediate_cleanup or dns_delete_grace_seconds <= 0:
                 dns_changes.append(
                     PlannedDnsChange(

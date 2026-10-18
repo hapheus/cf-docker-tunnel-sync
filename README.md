@@ -231,6 +231,8 @@ DASHBOARD_PASSWORD=your-secure-password
 
 - ⚙️ **[Configuration Reference](docs/configuration.md)** — Exhaustive list of all environment variables, flags, and circuit breakers.
 - 🏷️ **[Docker Labels Reference](docs/labels.md)** — Comprehensive container label guide (HTTP/HTTPS, SNI, multi-domain routing, TLS settings).
+- 🛡️ **[Security Architecture & Socket Hardening](docs/security.md)** — Docker socket tradeoffs, least-privilege socket proxy, and credential redaction.
+- 🔄 **[Operations, Teardown & Uninstall](docs/operations.md)** — Downtime semantics, tombstoning lifecycle, and clean uninstallation runbook.
 - 🏆 **[Flagship Multi-Compose Walkthrough](examples/02-multi-compose/README.md)** — Production-grade multi-stack guide with zero host-port exposure.
 - 📖 **[10-Minute Canonical Quickstart](QUICKSTART.md)** — Rapid standalone walkthrough.
 - 📋 **[Compatibility Baseline](docs/COMPATIBILITY.md)** — Verified Docker Compose versions and system matrix.

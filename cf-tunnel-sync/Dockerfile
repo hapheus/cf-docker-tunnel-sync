@@ -32,7 +32,7 @@ ENV PYTHONUNBUFFERED=1 \
 
 # Copy virtual environment and application source
 COPY --from=builder /app/.venv /app/.venv
-COPY app.py healthcheck.py cloudflare.py models.py reconcile.py diagnostics.py config.py metrics.py notifications.py resilience.py ./
+COPY app.py healthcheck.py cloudflare.py models.py reconcile.py diagnostics.py config.py metrics.py notifications.py resilience.py security.py ./
 COPY static ./static
 
 EXPOSE 8090
