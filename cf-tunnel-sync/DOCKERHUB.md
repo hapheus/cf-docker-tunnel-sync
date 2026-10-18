@@ -140,5 +140,7 @@ Alternatively, you can publish port `8090:8090` directly on `cf-tunnel-sync` to 
 
 - **Dashboard Image:** [`hapheus/cf-tunnel-dashboard`](https://hub.docker.com/r/hapheus/cf-tunnel-dashboard)
 - **10-Minute Quickstart Guide:** [github.com/hapheus/cf-docker-tunnel-sync/blob/main/QUICKSTART.md](https://github.com/hapheus/cf-docker-tunnel-sync/blob/main/QUICKSTART.md)
+- **Security & Socket Proxy Guide:** [github.com/hapheus/cf-docker-tunnel-sync/blob/main/docs/security.md](https://github.com/hapheus/cf-docker-tunnel-sync/blob/main/docs/security.md)
+- **Operations & Teardown Runbook:** [github.com/hapheus/cf-docker-tunnel-sync/blob/main/docs/operations.md](https://github.com/hapheus/cf-docker-tunnel-sync/blob/main/docs/operations.md)
 - **Source Code & Documentation:** [github.com/hapheus/cf-docker-tunnel-sync](https://github.com/hapheus/cf-docker-tunnel-sync)
 - **Issue Tracker:** [github.com/hapheus/cf-docker-tunnel-sync/issues](https://github.com/hapheus/cf-docker-tunnel-sync/issues)

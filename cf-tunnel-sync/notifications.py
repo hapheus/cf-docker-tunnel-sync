@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
 import httpx
+from security import redact_sensitive_data, redact_sensitive_string
 
 logger = logging.getLogger("cf-tunnel-sync")
 
@@ -83,7 +84,9 @@ class NotificationDispatcher:
         """Format JSON payload tailored for Discord, Slack, or Generic HTTP consumers."""
         provider = self.resolved_type
         iso_time = datetime.now(timezone.utc).isoformat()
-        details_dict = details or {}
+        title = redact_sensitive_string(title)
+        message = redact_sensitive_string(message)
+        details_dict = redact_sensitive_data(details or {})
 
         if provider == "slack":
             blocks = [

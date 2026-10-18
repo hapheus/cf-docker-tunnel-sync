@@ -78,7 +78,13 @@ def evaluate_service_stages(
     else:
         stages[DiagnosticStageName.NETWORK_TOPOLOGY.value] = {
             "status": DiagnosticStageStatus.WARNING.value,
-            "message": network_warning or "Missing shared network with cloudflared (potential 502 Bad Gateway)",
+            "message": network_warning
+            or (
+                "Missing shared network with cloudflared (potential 502 Bad Gateway). "
+                "Remediation: attach service to external network:\n"
+                "networks:\n"
+                "  - cf-tunnel-net"
+            ),
         }
 
     # Stage 4: CLOUDFLARE_INGRESS
@@ -150,9 +156,13 @@ def compute_truthful_service_status(stages: Dict[str, Dict[str, str]]) -> str:
     if stage_4 == DiagnosticStageStatus.PENDING.value or stage_5 == DiagnosticStageStatus.PENDING.value:
         return "Pending"
 
+    if stage_3 == DiagnosticStageStatus.WARNING.value:
+        return "Degraded"
+
     if (
         stage_1 == DiagnosticStageStatus.PASS.value
         and stage_2 == DiagnosticStageStatus.PASS.value
+        and stage_3 == DiagnosticStageStatus.PASS.value
         and stage_4 == DiagnosticStageStatus.PASS.value
         and stage_5 == DiagnosticStageStatus.PASS.value
     ):

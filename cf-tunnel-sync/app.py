@@ -37,6 +37,7 @@ from reconcile import (
     build_discovery_snapshot,
     compute_change_plan,
 )
+from security import SENSITIVE_KEY_SUBSTRINGS, redact_sensitive_string
 from starlette.responses import PlainTextResponse
 
 LOG_LEVEL_NAME = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -194,9 +195,10 @@ sync_state = {
 
 
 def add_log(msg: str):
+    safe_msg = redact_sensitive_string(msg)
     timestamp = time.strftime("%H:%M:%S")
-    entry = f"[{timestamp}] {msg}"
-    logger.info(msg)
+    entry = f"[{timestamp}] {safe_msg}"
+    logger.info(safe_msg)
     sync_state["logs"].insert(0, entry)
     if len(sync_state["logs"]) > 100:
         sync_state["logs"].pop()
@@ -226,8 +228,11 @@ class DockerAPIError(Exception):
 def docker_api(
     path: str, method: str = "GET", data: dict = None, timeout: Optional[float] = None, retries: Optional[int] = None
 ) -> Any:
+    docker_host = os.getenv("DOCKER_HOST", "").strip()
+    is_tcp = docker_host.startswith("tcp://") or docker_host.startswith("http://")
     socket_path = os.getenv("DOCKER_SOCKET", os.getenv("DOCKER_SOCKET_PATH", "/var/run/docker.sock"))
-    if not os.path.exists(socket_path):
+
+    if not is_tcp and not os.path.exists(socket_path):
         sync_state["docker_connected"] = False
         return []
 
@@ -247,7 +252,13 @@ def docker_api(
     for attempt in range(1, retries + 1):
         conn = None
         try:
-            conn = UnixHTTPConnection(socket_path, timeout=timeout)
+            if is_tcp:
+                parsed = urllib.parse.urlparse(docker_host)
+                host = parsed.hostname or "localhost"
+                port = parsed.port or 2375
+                conn = http.client.HTTPConnection(host, port, timeout=timeout)
+            else:
+                conn = UnixHTTPConnection(socket_path, timeout=timeout)
             body = None
             headers = {}
             if data is not None:
@@ -417,6 +428,8 @@ def handle_docker_event(event: dict):
 def listen_docker_events(
     on_event: Callable[[dict], None], stop_event: Optional[threading.Event] = None, socket_path: Optional[str] = None
 ):
+    docker_host = os.getenv("DOCKER_HOST", "").strip()
+    is_tcp = docker_host.startswith("tcp://") or docker_host.startswith("http://")
     if socket_path is None:
         socket_path = os.getenv("DOCKER_SOCKET", os.getenv("DOCKER_SOCKET_PATH", "/var/run/docker.sock"))
 
@@ -424,7 +437,7 @@ def listen_docker_events(
     max_backoff = 30.0
 
     while stop_event is None or not stop_event.is_set():
-        if not os.path.exists(socket_path):
+        if not is_tcp and not os.path.exists(socket_path):
             sync_state["docker_connected"] = False
             add_log(f"Docker socket not found at {socket_path}, retrying in {backoff:.1f}s")
             if stop_event:
@@ -437,7 +450,13 @@ def listen_docker_events(
 
         conn = None
         try:
-            conn = UnixHTTPConnection(socket_path, timeout=None)
+            if is_tcp:
+                parsed = urllib.parse.urlparse(docker_host)
+                host = parsed.hostname or "localhost"
+                port = parsed.port or 2375
+                conn = http.client.HTTPConnection(host, port, timeout=None)
+            else:
+                conn = UnixHTTPConnection(socket_path, timeout=None)
             query = "/events?filters=%7B%22type%22%3A%5B%22container%22%5D%7D"
             conn.request("GET", query)
             resp = conn.getresponse()
@@ -1206,17 +1225,20 @@ def run_sync_logic():
                 pass
 
         if old_token != tunnel_token:
-            os.makedirs("/etc/cloudflared", exist_ok=True)
-            with open(token_path, "w", encoding="utf-8") as f:
-                f.write(tunnel_token)
-            add_log("🔑 Updated Cloudflare Tunnel Token in shared volume")
-
             try:
-                cf_target = find_cloudflared_container_name()
-                docker_api(f"/containers/{cf_target}/restart", method="POST")
-                add_log(f"🔄 Triggered restart for cloudflared container ({cf_target})")
-            except Exception as re:
-                add_log(f"Notice restarting cloudflared: {re}")
+                os.makedirs("/etc/cloudflared", exist_ok=True)
+                with open(token_path, "w", encoding="utf-8") as f:
+                    f.write(tunnel_token)
+                add_log("🔑 Updated Cloudflare Tunnel Token in shared volume")
+
+                try:
+                    cf_target = find_cloudflared_container_name()
+                    docker_api(f"/containers/{cf_target}/restart", method="POST")
+                    add_log(f"🔄 Triggered restart for cloudflared container ({cf_target})")
+                except Exception as re:
+                    add_log(f"Notice restarting cloudflared: {re}")
+            except Exception as fe:
+                add_log(f"Notice writing tunnel token to {token_path}: {fe}")
 
         # 4. Discover Docker services
         try:
@@ -1231,6 +1253,7 @@ def run_sync_logic():
             add_log("Aborting sync: Docker daemon connection is degraded or unreachable")
             sync_state["status"] = "Docker connection degraded"
             return
+        prev_services = list(sync_state.get("discovered_services") or [])
         sync_state["discovered_services"] = services
         sync_state["all_containers"] = all_containers
 
@@ -1292,6 +1315,15 @@ def run_sync_logic():
             grace_period = float(os.getenv("DNS_CLEANUP_GRACE_PERIOD", 300.0))
         except ValueError:
             grace_period = 300.0
+
+        # SAFE-02 Invariant: Detect sudden container drop anomalies (e.g. Docker restart/reload blip)
+        if len(prev_services) >= 2 and len(services) == 0:
+            add_log(
+                f"⚠️ [SAFETY_GUARD] Sudden container drop detected ({len(prev_services)} -> 0). "
+                f"Enforcing tombstone grace period and blocking immediate deletions."
+            )
+            immediate_cleanup = False
+            grace_period = max(grace_period, 300.0)
 
         max_deletions_env = os.getenv("MAX_DELETIONS_PER_RUN")
         max_deletions = int(max_deletions_env) if max_deletions_env and max_deletions_env.isdigit() else None
@@ -1751,11 +1783,19 @@ def sanitize_sync_state(data: Any) -> Any:
 
     Excludes internal private keys (starting with '_') from dictionaries and
     recursively converts non-serializable collections (such as set and frozenset)
-    into sorted lists.
+    into sorted lists, while redacting sensitive tokens and credentials.
     """
     if isinstance(data, dict):
         items = list(data.items())
-        return {k: sanitize_sync_state(v) for k, v in items if not k.startswith("_")}
+        res = {}
+        for k, v in items:
+            if not k.startswith("_"):
+                k_lower = str(k).lower()
+                if any(sub in k_lower for sub in SENSITIVE_KEY_SUBSTRINGS):
+                    res[k] = "[REDACTED]"
+                else:
+                    res[k] = sanitize_sync_state(v)
+        return res
     elif isinstance(data, (set, frozenset)):
         items = list(data)
         try:
@@ -1765,6 +1805,8 @@ def sanitize_sync_state(data: Any) -> Any:
     elif isinstance(data, (list, tuple)):
         items = list(data)
         return [sanitize_sync_state(x) for x in items]
+    elif isinstance(data, str):
+        return redact_sensitive_string(data)
     return data
 
 
