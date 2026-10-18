@@ -54,8 +54,8 @@ def test_dashboard_dockerfile_and_nginx_isolation():
         assert term not in nginx_content, f"Forbidden sensitive dependency '{term}' found in dashboard nginx.conf!"
 
     # Nginx must include dynamic sync-backend.conf and dashboard-auth.conf
-    assert "include /etc/nginx/conf.d/sync-backend.conf;" in nginx_content
-    assert "include /etc/nginx/conf.d/dashboard-auth.conf;" in nginx_content
+    assert "include /etc/nginx/snippets/sync-backend.conf;" in nginx_content
+    assert "include /etc/nginx/snippets/dashboard-auth.conf;" in nginx_content
 
 
 def test_dashboard_entrypoint_upstream_templating(tmp_path):
