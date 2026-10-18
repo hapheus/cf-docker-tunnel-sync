@@ -20,7 +20,7 @@ Before beginning, ensure you have:
 
 | Identifier | Where to Find It | Required? |
 | :--- | :--- | :--- |
-| **Account ID** | Cloudflare Dashboard → select your domain under **Websites** → scroll down the right sidebar on **Overview**. | **Yes** (`CLOUDFLARE_ACCOUNT_ID`) |
+| **Account ID** | Cloudflare Dashboard → select your domain under **Websites** → scroll down the right sidebar on **Overview**. | **Optional** (auto-discovered from domain zone or token; specify `CLOUDFLARE_ACCOUNT_ID` only if pinning a specific account) |
 | **Zone ID** | Cloudflare Dashboard → right sidebar under Account ID. | **Optional** (auto-discovered via `Zone:Read` permission) |
 | **Tunnel ID** | Cloudflare Dashboard → Zero Trust → Networks → Tunnels. | **Optional** (auto-created if `CLOUDFLARE_TUNNEL_NAME` is used) |
 
@@ -46,7 +46,7 @@ Create a working directory and a `.env` file:
 mkdir -p ~/cf-tunnel && cd ~/cf-tunnel
 cat << 'EOF' > .env
 CLOUDFLARE_API_TOKEN=your_cloudflare_api_token_here
-CLOUDFLARE_ACCOUNT_ID=your_32_character_account_id
+# CLOUDFLARE_ACCOUNT_ID=your_32_character_account_id  # Optional: auto-detected if omitted
 CLOUDFLARE_TUNNEL_NAME=my-homelab-tunnel
 DOMAIN_NAME=example.com
 EOF
@@ -70,7 +70,7 @@ services:
     restart: unless-stopped
     environment:
       - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}
-      - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID}
+      - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-}
       - CLOUDFLARE_TUNNEL_NAME=${CLOUDFLARE_TUNNEL_NAME:-cf-docker-tunnel-sync}
       - DOMAIN_NAME=${DOMAIN_NAME}
       - CF_NETWORK_NAME=cf-tunnel-net

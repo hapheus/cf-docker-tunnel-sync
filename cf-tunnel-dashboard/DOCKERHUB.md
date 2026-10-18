@@ -69,6 +69,8 @@ Open your browser at `http://localhost:8080` (or your host IP) and log in with y
 | `DASHBOARD_AUTH_ENABLED` | `true` | Require HTTP Basic Authentication (`true` or `false`). |
 | `BASIC_AUTH_USERNAME` | *none* | Username for Basic Auth (required when auth is enabled). |
 | `BASIC_AUTH_PASSWORD` | *none* | Password for Basic Auth (required when auth is enabled). |
+| `SYNC_BACKEND_HOST` | `cf-tunnel-sync` | Hostname of the `cf-tunnel-sync` backend API container. |
+| `SYNC_BACKEND_PORT` | `8090` | Internal port of the `cf-tunnel-sync` backend API. |
 
 > **Security Note:** When `DASHBOARD_AUTH_ENABLED=true`, both `BASIC_AUTH_USERNAME` and `BASIC_AUTH_PASSWORD` must be provided. If either is missing, the container fails closed and exits immediately with an error to prevent unauthenticated access.
 

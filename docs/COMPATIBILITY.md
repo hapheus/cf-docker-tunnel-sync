@@ -5,9 +5,11 @@
 `cf-docker-tunnel-sync` strictly adheres to a **Zero Breaking Changes** policy for all existing deployments:
 
 * **Additive Only:** New features, environment variables, Docker labels, API response fields, and deployment examples are strictly additive and optional. Existing services will never require re-creation, relabeling, or configuration updates to upgrade.
+* **Auto-Discovery of Credentials:** `CLOUDFLARE_ACCOUNT_ID` is strictly optional and automatically discovered from the domain zone or API token. Existing configurations specifying `CLOUDFLARE_ACCOUNT_ID` continue to work unchanged.
 * **Preserve Runtime Defaults:** Default behavior for published ports, shared network requirements (`REQUIRE_SHARED_NETWORK=false`), container discovery, deletion semantics, and polling intervals remain strictly unchanged across releases.
 * **Preserve Remote Infrastructure:** The daemon never deletes, renames, overwrites, or claims ownership of pre-existing or unmanaged Cloudflare DNS records, ingress rules, or tunnels.
 * **Keep Legacy Topologies Supported:** Single-compose, multi-compose, custom networks, and companion dashboards remain first-class supported topologies.
+* **API & Dashboard Decoupling Guarantee:** The embedded web interface (`/` and `/dashboard`) remains available by default. Standalone companion dashboard setups (`hapheus/cf-tunnel-dashboard`) communicate strictly over documented HTTP API endpoints (`/api/*`) without accessing the Docker socket or Cloudflare credentials.
 * **Rollback Guarantee:** Upgrades are stateless and require zero irreversible migrations. Downgrading container images to a previous release tag is always safe.
 
 ---
@@ -22,9 +24,11 @@ The test suite validates upgrade-in-place stability against the following canoni
    * Central gateway stack communicating with independent application Compose stacks across a shared bridge network (`cf-tunnel-net`).
 3. **Multi-Account & Tunnel Scoping (`examples/03-multi-account`):**
    * Scoped tunnel instances using `cf.tunnel.name` or `cf.tunnel.account` labels.
-4. **Custom Network Architectures:**
+4. **Socket-Proxy Topology (`examples/04-socket-proxy`):**
+   * TCP-isolated Docker socket proxy deployments (`DOCKER_HOST=tcp://socket-proxy:2375`) without mounting `/var/run/docker.sock` directly.
+5. **Custom Network Architectures:**
    * Custom bridge or overlay networks configured via `CUSTOM_NETWORK` / `CF_NETWORK_NAME`.
-5. **Historical Label Aliases:**
+6. **Historical Label Aliases:**
    * Seamless backwards-compatibility for `tunnel.hostname`, `tunnel.port`, `tunnel.service`, `cloudflared.hostname`, etc.
 
 ---
@@ -56,7 +60,7 @@ If an issue occurs or an operator chooses to rollback:
 
 ```bash
 # 1. Pin the service image to the previous release tag in docker-compose.yml
-# image: hapheus/cf-docker-tunnel-sync:v1.13.0
+# image: hapheus/cf-tunnel-sync:v1.16.0
 
 # 2. Re-create the container with the previous tag
 docker compose up -d
@@ -66,3 +70,4 @@ curl -s http://localhost:8080/health
 ```
 
 No database migrations, volume rollbacks, or Cloudflare DNS repairs are required.
+

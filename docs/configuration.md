@@ -11,11 +11,11 @@ This document provides a comprehensive reference for all environment variables s
 | Variable | Required | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `CLOUDFLARE_API_TOKEN` | **Yes** | — | Cloudflare API Token with permissions: <br>• `Account → Cloudflare Tunnel → Edit`<br>• `Zone → DNS → Edit`<br>• `Zone → Zone → Read`. *(Alias: `CLOUDFLARE_TOKEN`)* |
-| `CLOUDFLARE_ACCOUNT_ID` | **Yes** | — | 32-character hexadecimal Cloudflare Account ID (found in the Cloudflare dashboard sidebar under **Overview**). |
+| `CLOUDFLARE_ACCOUNT_ID` | Optional | *auto-detected* | 32-character hexadecimal Cloudflare Account ID. Automatically detected from domain zone or API token if omitted. Useful to explicitly pin an account when an API token has access to multiple accounts. |
 | `CLOUDFLARE_TUNNEL_NAME` | **Yes**\* | — | Name of the Cloudflare Tunnel. If the tunnel does not exist, `cf-tunnel-sync` automatically creates it upon first startup in standard sync mode. <br>\**Either `CLOUDFLARE_TUNNEL_NAME` or `CLOUDFLARE_TUNNEL_ID` is required.* |
 | `CLOUDFLARE_TUNNEL_ID` | Optional | — | UUID of an existing Cloudflare Tunnel. If provided, `cf-tunnel-sync` binds directly to this tunnel without querying by name. |
 | `DOMAIN_NAME` | Optional | — | Primary domain zone (e.g., `example.com`). If omitted, zone IDs are resolved dynamically based on container hostname labels. |
-| `CLOUDFLARE_ZONE_ID` | Optional | — | Explicit Cloudflare DNS Zone ID. If omitted, resolved automatically via the `Zone:Read` permission on your API token. |
+| `CLOUDFLARE_ZONE_ID` | Optional | *auto-detected* | Explicit Cloudflare DNS Zone ID. If omitted, resolved automatically via the `Zone:Read` permission on your API token. |
 
 ---
 
@@ -25,7 +25,7 @@ This document provides a comprehensive reference for all environment variables s
 | :--- | :--- | :--- | :--- |
 | `CF_NETWORK_NAME` | Optional | auto-detected | Docker bridge network name connecting `cloudflared`, `cf-tunnel-sync`, and target service containers (e.g., `cf-tunnel-net`). |
 | `CLOUDFLARED_CONTAINER_NAME` | Optional | `cloudflared` | Container name or alias of the `cloudflared` tunnel connector daemon. |
-| `DOCKER_HOST` | Optional | `unix:///var/run/docker.sock` | Docker daemon connection socket or TCP endpoint. |
+| `DOCKER_HOST` | Optional | `unix:///var/run/docker.sock` | Docker daemon connection socket or TCP endpoint (e.g., `tcp://socket-proxy:2375`). |
 
 ---
 
@@ -54,15 +54,17 @@ This document provides a comprehensive reference for all environment variables s
 
 ---
 
-### Web Dashboard & Authentication
+### Web Dashboard & API Exposure
 
 | Variable | Required | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `DASHBOARD_ENABLED` | Optional | `true` | Enables the built-in status and live log web dashboard (`ENABLE_DASHBOARD` is also accepted). |
-| `DASHBOARD_PORT` | Optional | `5000` | Port on which the web dashboard listens inside the container. |
-| `DASHBOARD_AUTH_ENABLED` | Optional | `false` | Enables HTTP Basic Authentication for accessing the web dashboard. |
+| `DASHBOARD_ENABLED` | Optional | `true` | Enables the embedded status and log web dashboard at `/` and `/dashboard` (`EMBEDDED_DASHBOARD_ENABLED` is also accepted). |
+| `DASHBOARD_PORT` | Optional | `8090` | Internal HTTP listening port for the API and embedded dashboard (`8090` internally, typically mapped to `8080:8090`). |
+| `DASHBOARD_AUTH_ENABLED` | Optional | `false` | Enables HTTP Basic Authentication for accessing the web dashboard and status endpoints. |
 | `DASHBOARD_USERNAME` | Optional | `admin` | Username required when `DASHBOARD_AUTH_ENABLED=true` (`BASIC_AUTH_USERNAME` is also accepted). |
 | `DASHBOARD_PASSWORD` | Optional | — | Password required when `DASHBOARD_AUTH_ENABLED=true` (`BASIC_AUTH_PASSWORD` is also accepted). |
+| `SYNC_BACKEND_HOST` | Optional | `cf-tunnel-sync` | For companion `cf-tunnel-dashboard` container: hostname of the `cf-tunnel-sync` API backend. |
+| `SYNC_BACKEND_PORT` | Optional | `8090` | For companion `cf-tunnel-dashboard` container: port of the `cf-tunnel-sync` API backend. |
 
 ---
 
@@ -71,7 +73,7 @@ This document provides a comprehensive reference for all environment variables s
 ```env
 # Cloudflare Credentials
 CLOUDFLARE_API_TOKEN=cf_pat_your_secure_api_token
-CLOUDFLARE_ACCOUNT_ID=0123456789abcdef0123456789abcdef
+# CLOUDFLARE_ACCOUNT_ID=0123456789abcdef0123456789abcdef  # Optional: auto-detected if omitted
 CLOUDFLARE_TUNNEL_NAME=production-gateway
 DOMAIN_NAME=example.com
 

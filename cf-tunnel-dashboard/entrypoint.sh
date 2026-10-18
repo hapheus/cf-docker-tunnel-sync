@@ -25,5 +25,19 @@ EOF
     ;;
 esac
 
+BACKEND_HOST=${SYNC_BACKEND_HOST:-cf-tunnel-sync}
+BACKEND_PORT=${SYNC_BACKEND_PORT:-8090}
+
+cat > /etc/nginx/conf.d/sync-backend.conf <<EOF
+location /api/ {
+    proxy_pass http://${BACKEND_HOST}:${BACKEND_PORT}/api/;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+}
+EOF
+
 # Execute Nginx
 exec nginx -g "daemon off;"
+

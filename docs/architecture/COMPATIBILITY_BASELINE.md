@@ -34,7 +34,7 @@ All 28 supported configuration environment variables must remain strictly additi
 | Environment Variable | Type | Default | Description |
 |---|---|---|---|
 | `CLOUDFLARE_API_TOKEN` | String (Secret) | *Required* | Scoped Cloudflare API token (`Zone:DNS:Edit`, `Account:Cloudflare Tunnel:Edit`). |
-| `CLOUDFLARE_ACCOUNT_ID` | String | *Required* | 32-character hexadecimal Cloudflare account identifier. |
+| `CLOUDFLARE_ACCOUNT_ID` | String | Optional (Auto-discovered) | 32-character hexadecimal Cloudflare account identifier. Auto-resolved if omitted. |
 | `CLOUDFLARE_TUNNEL_NAME` | String | `"cf-docker-tunnel-sync"` | Name of the Cloudflare Tunnel managed by this instance. |
 | `CLOUDFLARE_TUNNEL_ID` | String (UUID) | Auto-discovered | 36-character UUID of the Cloudflare Tunnel. |
 | `CF_NETWORK_NAME` | String | `"cf-tunnel-net"` | Docker network name inspected for container connectivity. |
