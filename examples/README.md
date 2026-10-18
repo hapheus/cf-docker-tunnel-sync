@@ -12,7 +12,7 @@ This directory contains battle-tested, copy-paste-ready Docker Compose configura
 | **[`02-multi-stack-external-net`](02-multi-stack-external-net/README.md)** | **Decoupled Gateway & Multi-App Stacks**: Connected via shared external bridge network (`cf-tunnel-net`). | **Recommended Production & Homelab** |
 | **[`03-secure-socket-proxy`](03-secure-socket-proxy/README.md)** | **Hardened Docker Socket Security**: Zero direct socket mount using `tecnativa/docker-socket-proxy` (TCP read-only). | Security-sensitive & enterprise environments |
 | **[`04-advanced-labels-tls-multiport`](04-advanced-labels-tls-multiport/README.md)** | **Complex Backends**: Self-signed internal HTTPS (`noTLSVerify`), custom `Host` header rewrite, multi-port disambiguation. | Proxmox, Nextcloud, TrueNAS, Portainer, MinIO |
-| **[`03-multi-account`](03-multi-account/README.md)** | **Multi-Account & Multi-Tunnel Scoping**: Running independent sync instances per business/personal account. | Multi-tenant & multi-account setups |
+| **[`05-multi-account`](05-multi-account/README.md)** | **Multi-Account & Multi-Tunnel Scoping**: Running independent sync instances per business/personal account. | Multi-tenant & multi-account setups |
 
 ---
 

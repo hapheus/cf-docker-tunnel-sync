@@ -17,12 +17,12 @@ This document details the internal design, reconciliation state machine, DNS own
 
 ```mermaid
 flowchart TD
-    A["Docker API (/containers/json)"] -->|1. Harvest Local State| B["DiscoverySnapshot"]
-    C["Cloudflare API (/cfd_tunnel, /dns_records)"] -->|2. Harvest Remote State| D["RemoteState"]
+    A["Docker API (/containers/json)"] -->|"1. Harvest Local State"| B["DiscoverySnapshot"]
+    C["Cloudflare API (/cfd_tunnel, /dns_records)"] -->|"2. Harvest Remote State"| D["RemoteState"]
     B --> E["Pure Reconciler (reconcile.py)"]
     D --> E
-    E -->|3. Compute Diff| F["ChangePlan"]
-    F -->|4. Safe? Check Blast Radius & Circuit Breakers| G{"Safe?"}
+    E -->|"3. Compute Diff"| F["ChangePlan"]
+    F -->|"4. Safe? Check Blast Radius & Circuit Breakers"| G{"Safe?"}
     G -- "Yes" --> H["Execute API Mutations (Only if Diff Exists)"]
     G -- "No (Blast Radius Exceeded)" --> I["Abort Sync & Preserve Remote Infrastructure"]
 ```

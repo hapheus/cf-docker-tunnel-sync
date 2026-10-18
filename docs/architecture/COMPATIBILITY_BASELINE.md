@@ -8,16 +8,16 @@ This document establishes the official supported-behavior baseline, configuratio
 
 The sync engine guarantees zero configuration disruption and deterministic behavior across the following deployment topologies:
 
-1. **Single-Compose Topology (`examples/01-single-compose`):**
+1. **Single-Compose Topology (`examples/01-quickstart-single-stack`):**
    - Cloudflare Tunnel connector, `cf-docker-tunnel-sync`, and proxied service containers coexist in a single `docker-compose.yml` sharing an internal bridge network (`cf-tunnel-net`).
    - Origins resolve directly via Docker internal DNS names and published/target container ports.
 
-2. **Multi-Compose Topology (`examples/02-multi-compose`):**
+2. **Multi-Compose Topology (`examples/02-multi-stack-external-net`):**
    - Cloudflare Tunnel connector runs in an infrastructure compose project.
    - Application services run in independent compose projects, attached to an external shared Docker network (`cf-tunnel-net`).
    - Discovery discovers origins across arbitrary compose projects and associates them with the designated tunnel.
 
-3. **Multi-Account & Multi-Tunnel Scoping (`examples/03-multi-account`):**
+3. **Multi-Account & Multi-Tunnel Scoping (`examples/05-multi-account`):**
    - Containers use `cf.tunnel.name` to bind to specific tunnels.
    - Sync engine processes only containers matching its configured `CLOUDFLARE_TUNNEL_NAME`, ignoring foreign or un-scoped containers without throwing warnings.
 

@@ -220,5 +220,5 @@ docker compose run --rm -e DRY_RUN=true cf-tunnel-sync python app.py --dry-run
 - 🏷️ **[Docker Labels Reference](docs/labels.md)** — All supported container labels, port precedence, and routing.
 - 🔧 **[Troubleshooting Guide](docs/troubleshooting.md)** — Task-based diagnosis, error codes, and practical remedies.
 - 📋 **[Support Matrix & Platform Limits](docs/support-matrix.md)** — Supported operating systems, Docker versions, and Cloudflare tiers.
-- 🏆 **[Multi-Compose Production Walkthrough](examples/02-multi-compose/README.md)** — Independent gateway and multi-stack architecture.
+- 🏆 **[Multi-Compose Production Walkthrough](examples/02-multi-stack-external-net/README.md)** — Independent gateway and multi-stack architecture.
 - 🛡️ **[Security Architecture](docs/security.md)** — Docker socket isolation and credential protection.

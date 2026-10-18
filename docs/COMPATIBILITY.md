@@ -18,14 +18,14 @@
 
 The test suite validates upgrade-in-place stability against the following canonical topologies:
 
-1. **Single-Compose Topology (`examples/01-single-compose`):**
-   * Central gateway daemon, companion dashboard, and application container in a single `docker-compose.yml`.
-2. **Multi-Compose Topology (`examples/02-multi-compose`):**
+1. **Single-Compose Topology (`examples/01-quickstart-single-stack`):**
+   * Central gateway daemon and application container in a single `docker-compose.yml`.
+2. **Multi-Compose Topology (`examples/02-multi-stack-external-net`):**
    * Central gateway stack communicating with independent application Compose stacks across a shared bridge network (`cf-tunnel-net`).
-3. **Multi-Account & Tunnel Scoping (`examples/03-multi-account`):**
+3. **Socket-Proxy Topology (`examples/03-secure-socket-proxy`):**
+   * TCP-isolated Docker socket proxy deployments (`DOCKER_HOST=tcp://docker-socket-proxy:2375`) without mounting `/var/run/docker.sock` directly.
+4. **Multi-Account & Tunnel Scoping (`examples/05-multi-account`):**
    * Scoped tunnel instances using `cf.tunnel.name` or `cf.tunnel.account` labels.
-4. **Socket-Proxy Topology (`examples/04-socket-proxy`):**
-   * TCP-isolated Docker socket proxy deployments (`DOCKER_HOST=tcp://socket-proxy:2375`) without mounting `/var/run/docker.sock` directly.
 5. **Custom Network Architectures:**
    * Custom bridge or overlay networks configured via `CUSTOM_NETWORK` / `CF_NETWORK_NAME`.
 6. **Historical Label Aliases:**

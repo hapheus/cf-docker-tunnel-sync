@@ -33,7 +33,7 @@ For production environments, shared infrastructure, or hardened homelabs, use an
 ```
 
 #### Example Configuration:
-A fully configured, working example is provided in [examples/04-socket-proxy/docker-compose.yml](../examples/04-socket-proxy/docker-compose.yml):
+A fully configured, working example is provided in [examples/03-secure-socket-proxy/docker-compose.yml](../examples/03-secure-socket-proxy/docker-compose.yml):
 ```yaml
 services:
   docker-socket-proxy:

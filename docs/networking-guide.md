@@ -21,11 +21,11 @@ flowchart TD
         App["Target Application Container<br/>(e.g., whoami, nextcloud)"]
     end
 
-    Edge ===>|Encrypted QUIC / HTTP2 Tunnel (Outbound Port 7844)| CFD
-    CFD -->|Internal Docker Bridge Network (cf-tunnel-net)| App
-    Sync -->|1. Inspects Labels & Ports| App
-    Sync -->|2. Configures Ingress & DNS| API
-    Sync -.->|3. Writes Token File (/etc/cloudflared/token)| CFD
+    Edge ===>|"Encrypted QUIC / HTTP2 Tunnel (Outbound Port 7844)"| CFD
+    CFD -->|"Internal Docker Bridge Network (cf-tunnel-net)"| App
+    Sync -->|"1. Inspects Labels & Ports"| App
+    Sync -->|"2. Configures Ingress & DNS"| API
+    Sync -.->|"3. Writes Token File (/etc/cloudflared/token)"| CFD
 ```
 
 * **Control Plane (`cf-tunnel-sync`):**

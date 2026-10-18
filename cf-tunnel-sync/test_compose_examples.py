@@ -64,7 +64,7 @@ class TestComposeExamplesAndSchemaValidation(unittest.TestCase):
     def test_headless_gateway_example_has_no_published_ports(self):
         """Verifies that the canonical headless gateway example has zero host-published ports (Issue #92)."""
         headless_compose = os.path.join(
-            self.root_dir, "examples", "02-multi-compose", "gateway", "docker-compose.headless.yml"
+            self.root_dir, "examples", "02-multi-stack-external-net", "core-tunnel-stack", "docker-compose.headless.yml"
         )
         self.assertTrue(os.path.isfile(headless_compose), "docker-compose.headless.yml must exist")
 
@@ -98,7 +98,13 @@ class TestComposeExamplesAndSchemaValidation(unittest.TestCase):
             "Root docker-compose.yml must retain dashboard port binding for backward compatibility",
         )
 
-        gateway_compose = os.path.join(self.root_dir, "examples", "02-multi-compose", "gateway", "docker-compose.yml")
+        gateway_compose = os.path.join(
+            self.root_dir,
+            "examples",
+            "02-multi-stack-external-net",
+            "core-tunnel-stack",
+            "docker-compose.with-dashboard.yml",
+        )
         with open(gateway_compose, "r", encoding="utf-8") as f:
             gw_data = yaml.safe_load(f)
         gw_services = gw_data.get("services", {})
@@ -110,8 +116,8 @@ class TestComposeExamplesAndSchemaValidation(unittest.TestCase):
         )
 
     def test_flagship_multi_compose_walkthrough_docs(self):
-        """Verifies that examples/02-multi-compose/README.md is the complete flagship walkthrough (Issue #96)."""
-        walkthrough_path = os.path.join(self.root_dir, "examples", "02-multi-compose", "README.md")
+        """Verifies that examples/02-multi-stack-external-net/README.md is the complete flagship walkthrough (Issue #96)."""
+        walkthrough_path = os.path.join(self.root_dir, "examples", "02-multi-stack-external-net", "README.md")
         self.assertTrue(os.path.isfile(walkthrough_path), "Flagship walkthrough README must exist")
 
         with open(walkthrough_path, "r", encoding="utf-8") as f:
@@ -187,7 +193,7 @@ class TestComposeExamplesAndSchemaValidation(unittest.TestCase):
         """Issue #126: Run mock reconcile smoke run asserting valid ChangePlans for example services."""
         from reconcile import RemoteState, build_discovery_snapshot, compute_change_plan
 
-        # Simulate containers discovered from 01-single-compose and 02-multi-compose
+        # Simulate containers discovered from compose example stacks
         discovered_services = [
             {"container": "whoami", "hostname": "whoami.test.example.com", "service": "http://whoami:80"},
             {"container": "website", "hostname": "web.test.example.com", "service": "http://website:80"},

@@ -3,9 +3,9 @@ QA Regression & Backwards Compatibility Test Suite for cf-docker-tunnel-sync
 
 Validates:
 1. Strict Zero Breaking Changes across existing docker-compose topologies:
-   - Single-compose architectures (e.g. examples/01-single-compose)
-   - Dual/multi-compose architectures (e.g. examples/02-multi-compose gateway + isolated service stacks)
-   - Multi-account / scoped tunnel architectures (e.g. examples/03-multi-account)
+   - Single-compose architectures (e.g. examples/01-quickstart-single-stack)
+   - Dual/multi-compose architectures (e.g. examples/02-multi-stack-external-net gateway + isolated service stacks)
+   - Multi-account / scoped tunnel architectures (e.g. examples/05-multi-account)
 2. Backwards compatibility for legacy label formats:
    - cloudflared.hostname, cloudflared.domain
    - cloudflared.port, bare 'port'
@@ -55,7 +55,7 @@ class TestComposeTopologiesRegression(unittest.TestCase):
     @patch("app.docker_api")
     def test_examples_01_single_compose_architecture(self, mock_docker_api):
         """
-        Simulate examples/01-single-compose/docker-compose.yml:
+        Simulate examples/01-quickstart-single-stack/docker-compose.yml:
         - cloudflared sibling container
         - cf-tunnel-sync container
         - cf-tunnel-dashboard container
@@ -127,7 +127,7 @@ class TestComposeTopologiesRegression(unittest.TestCase):
     @patch("app.docker_api")
     def test_examples_02_multi_compose_architecture(self, mock_docker_api):
         """
-        Simulate examples/02-multi-compose/:
+        Simulate examples/02-multi-stack-external-net/:
         - Gateway stack: cloudflared + sync + dashboard
         - Isolated stacks: whoami (80), website (80), api (3000)
         All attached via external cf-tunnel-net network.
@@ -176,7 +176,7 @@ class TestComposeTopologiesRegression(unittest.TestCase):
     @patch("app.docker_api")
     def test_examples_03_multi_account_tunnel_scoping(self, mock_docker_api):
         """
-        Simulate examples/03-multi-account/:
+        Simulate examples/05-multi-account/:
         Two gateway instances scoped by CLOUDFLARE_TUNNEL_NAME:
         - personal-tunnel only synchronizes containers marked cf.tunnel.name=personal-tunnel
         - business-tunnel only synchronizes containers marked cf.tunnel.name=business-tunnel

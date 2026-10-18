@@ -1,24 +1,27 @@
 services:
   cloudflared:
     image: cloudflare/cloudflared:latest
-    restart: always
+    container_name: cloudflared
+    restart: unless-stopped
     command: tunnel --no-autoupdate run --token-file /etc/cloudflared/token
     volumes:
       - cf_token_data:/etc/cloudflared
     networks:
       - cf-tunnel-net
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    depends_on:
+      cf-tunnel-sync:
+        condition: service_healthy
 
   cf-tunnel-sync:
     image: hapheus/cf-tunnel-sync:latest
-    restart: always
+    container_name: cf-tunnel-sync
+    restart: unless-stopped
     environment:
-      - DOMAIN_NAME=${DOMAIN_NAME}
       - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}
-      - CLOUDFLARE_TUNNEL_NAME=${CLOUDFLARE_TUNNEL_NAME:-gateway-tunnel}
-      - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-}
-      - POLL_INTERVAL=30
+      - DOMAIN_NAME=${DOMAIN_NAME}
+      - CLOUDFLARE_TUNNEL_NAME=${CLOUDFLARE_TUNNEL_NAME:-homelab-gateway}
+      - CF_NETWORK_NAME=${CF_NETWORK_NAME:-cf-tunnel-net}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - cf_token_data:/etc/cloudflared
@@ -29,12 +32,12 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
-      start_period: 5s
+      start_period: 2s
 
 networks:
   cf-tunnel-net:
     name: ${CF_NETWORK_NAME:-cf-tunnel-net}
-    driver: bridge
+    external: true
 
 volumes:
   cf_token_data:

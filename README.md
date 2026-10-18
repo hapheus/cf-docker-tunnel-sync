@@ -36,25 +36,25 @@ A core design principle of `cf-docker-tunnel-sync` is the strict separation betw
 ```mermaid
 flowchart LR
     subgraph Docker Host
-        Socket[(/var/run/docker.sock)]
-        Sync[cf-docker-tunnel-sync<br/>Control Plane]
-        CFD[cloudflared<br/>Data Plane Daemon]
-        App1[Container: App A<br/>Label: app.example.com]
-        App2[Container: App B<br/>Label: api.example.com]
+        Socket[("/var/run/docker.sock")]
+        Sync["cf-docker-tunnel-sync<br/>Control Plane"]
+        CFD["cloudflared<br/>Data Plane Daemon"]
+        App1["Container: App A<br/>Label: app.example.com"]
+        App2["Container: App B<br/>Label: api.example.com"]
         
-        Socket -->|1. Polls Labels / State| Sync
-        CFD -->|4. Routes Traffic via<br/>Shared Docker Network| App1
-        CFD -->|4. Routes Traffic via<br/>Shared Docker Network| App2
+        Socket -->|"1. Polls Labels / State"| Sync
+        CFD -->|"4. Routes Traffic via<br/>Shared Docker Network"| App1
+        CFD -->|"4. Routes Traffic via<br/>Shared Docker Network"| App2
     end
 
     subgraph Cloudflare Edge
-        CFAPI[Cloudflare API<br/>Zero Trust & DNS]
-        CFEdge[Cloudflare Edge<br/>Public CNAMEs]
+        CFAPI["Cloudflare API<br/>Zero Trust & DNS"]
+        CFEdge["Cloudflare Edge<br/>Public CNAMEs"]
     end
 
-    Sync -->|2. Reconciles Tunnel Config<br/>& Managed CNAMEs| CFAPI
-    CFAPI -.->|3. Pushes Ingress Rules| CFD
-    CFEdge ===>|Argo Tunnel Connection| CFD
+    Sync -->|"2. Reconciles Tunnel Config<br/>& Managed CNAMEs"| CFAPI
+    CFAPI -.->|"3. Pushes Ingress Rules"| CFD
+    CFEdge ===>|"Argo Tunnel Connection"| CFD
 ```
 
 * **Control Plane (`cf-tunnel-sync`):** Interrogates Docker container labels, computes changes, writes credentials to a shared volume (`/etc/cloudflared/token`), and reconciles Cloudflare Tunnels and DNS via Cloudflare's REST API. It **never proxies user traffic**.
@@ -239,7 +239,7 @@ docker compose run --rm -e DRY_RUN=true cf-tunnel-sync python app.py --dry-run
 | **[`02-multi-stack-external-net`](examples/02-multi-stack-external-net/README.md)** | Decoupled Multi-Stack | Dedicated gateway stack routing independent app stacks across `cf-tunnel-net`. |
 | **[`03-secure-socket-proxy`](examples/03-secure-socket-proxy/README.md)** | Hardened Security | Read-only Docker REST API filtering via `tecnativa/docker-socket-proxy`. |
 | **[`04-advanced-labels-tls-multiport`](examples/04-advanced-labels-tls-multiport/README.md)** | Complex Backends | Self-signed internal HTTPS (`noTLSVerify`), custom `Host` header, multi-port routing. |
-| **[`03-multi-account`](examples/03-multi-account/README.md)** | Multi-Account | Running isolated gateway instances across multiple Cloudflare accounts. |
+| **[`05-multi-account`](examples/05-multi-account/README.md)** | Multi-Account | Running isolated gateway instances across multiple Cloudflare accounts. |
 
 ---
 
