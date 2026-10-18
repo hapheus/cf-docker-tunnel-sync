@@ -146,7 +146,7 @@ docker exec cf-tunnel-sync python app.py --preflight
   docker logs cloudflared --tail 30
   ```
 - **Fix:**
-  In single-compose or gateway setups, verify that the shared volume `cloudflared-token` is mounted by both `cf-tunnel-sync` and `cloudflared`. `cf-tunnel-sync` writes `tunnel-token.txt` and triggers a container restart for `cloudflared` upon first bootstrap.
+  In single-compose or gateway setups, verify that the shared volume `cf_token_data` is mounted at `/etc/cloudflared` by both `cf-tunnel-sync` and `cloudflared`. `cf-tunnel-sync` writes the tunnel token to `/etc/cloudflared/token` and triggers a container restart for `cloudflared` upon first bootstrap. Ensure `cloudflared` runs `command: tunnel --no-autoupdate run --token-file /etc/cloudflared/token`.
 
 ---
 

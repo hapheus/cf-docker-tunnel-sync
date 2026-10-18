@@ -80,9 +80,14 @@ services:
     image: cloudflare/cloudflared:latest
     container_name: cloudflared
     restart: unless-stopped
-    command: tunnel run --token ${CLOUDFLARED_TUNNEL_TOKEN}
+    command: tunnel --no-autoupdate run --token-file /etc/cloudflared/token
+    volumes:
+      - cf_token_data:/etc/cloudflared
     networks:
       - cf-tunnel-net
+    depends_on:
+      cf-tunnel-sync:
+        condition: service_healthy
 
   cf-tunnel-sync:
     image: hapheus/cf-tunnel-sync:latest
@@ -96,13 +101,23 @@ services:
       - LOG_LEVEL=INFO
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - cf_token_data:/etc/cloudflared
     networks:
       - cf-tunnel-net
+    healthcheck:
+      test: ["CMD", "python", "healthcheck.py"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 2s
 
 networks:
   cf-tunnel-net:
     name: cf-tunnel-net
     driver: bridge
+
+volumes:
+  cf_token_data:
 ```
 
 Start the gateway:
