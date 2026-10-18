@@ -149,7 +149,6 @@ class TestComposeExamplesAndSchemaValidation(unittest.TestCase):
             "CLOUDFLARE_API_TOKEN": "mock-pat-token-12345",
             "CLOUDFLARE_TUNNEL_NAME": "ci-smoke-tunnel",
             "CLOUDFLARE_TUNNEL_ID": "8a7b6c5d-4e3f-2a1b-0c9d-8e7f6a5b4c3d",
-            "CLOUDFLARED_TUNNEL_TOKEN": "mock-jwt-token",
             "CF_NETWORK_NAME": "cf-tunnel-net",
             "DASHBOARD_AUTH_ENABLED": "true",
             "DASHBOARD_USERNAME": "admin",
@@ -226,6 +225,58 @@ class TestComposeExamplesAndSchemaValidation(unittest.TestCase):
         self.assertEqual(plan.summary.ingress_creates, 3)
         self.assertEqual(plan.summary.dns_creates, 3)
         self.assertEqual(len(plan.final_ingress_rules), 4)  # 3 services + 404 catch-all
+
+    def test_cloudflared_token_file_contract(self):
+        """Verify that cloudflared never expects manual CLOUDFLARED_TUNNEL_TOKEN and always uses the shared token-file."""
+        for path in self.compose_files:
+            rel = os.path.relpath(path, self.root_dir)
+            with open(path, "r", encoding="utf-8") as f:
+                content = yaml.safe_load(f)
+
+            if not isinstance(content, dict) or "services" not in content:
+                continue
+
+            services = content["services"]
+            if "cloudflared" in services:
+                cf_svc = services["cloudflared"]
+                cmd = cf_svc.get("command", "")
+                if isinstance(cmd, list):
+                    cmd = " ".join(cmd)
+
+                self.assertNotIn(
+                    "CLOUDFLARED_TUNNEL_TOKEN",
+                    cmd,
+                    f"{rel}: cloudflared must not use CLOUDFLARED_TUNNEL_TOKEN in command",
+                )
+                self.assertNotIn(
+                    "run --token ",
+                    cmd,
+                    f"{rel}: cloudflared must not pass raw token via --token",
+                )
+                self.assertIn(
+                    "--token-file /etc/cloudflared/token",
+                    cmd,
+                    f"{rel}: cloudflared must run with '--token-file /etc/cloudflared/token'",
+                )
+
+                # Ensure shared volume mounted to /etc/cloudflared
+                cf_vols = cf_svc.get("volumes", [])
+                has_token_vol = any(v.endswith(":/etc/cloudflared") or ":/etc/cloudflared:" in v for v in cf_vols)
+                self.assertTrue(
+                    has_token_vol,
+                    f"{rel}: cloudflared must mount shared volume to /etc/cloudflared",
+                )
+
+                # Ensure cf-tunnel-sync also mounts /etc/cloudflared
+                if "cf-tunnel-sync" in services:
+                    sync_vols = services["cf-tunnel-sync"].get("volumes", [])
+                    has_sync_token_vol = any(
+                        v.endswith(":/etc/cloudflared") or ":/etc/cloudflared:" in v for v in sync_vols
+                    )
+                    self.assertTrue(
+                        has_sync_token_vol,
+                        f"{rel}: cf-tunnel-sync must mount shared volume to /etc/cloudflared",
+                    )
 
 
 if __name__ == "__main__":
