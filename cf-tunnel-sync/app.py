@@ -1751,9 +1751,22 @@ def check_dashboard_auth(credentials: Optional[HTTPBasicCredentials] = Depends(s
     return True
 
 
+def is_dashboard_enabled() -> bool:
+    val = os.getenv("DASHBOARD_ENABLED", os.getenv("EMBEDDED_DASHBOARD_ENABLED", "true")).strip().lower()
+    return val not in ("false", "0", "no", "disabled", "off")
+
+
 @app.get("/", response_class=HTMLResponse)
 @app.get("/dashboard", response_class=HTMLResponse)
 def get_dashboard(authenticated: bool = Depends(check_dashboard_auth)):
+    if not is_dashboard_enabled():
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={
+                "status": "disabled",
+                "message": "Embedded dashboard UI is disabled. Use /api/status for API data.",
+            },
+        )
     static_file = os.path.join(os.path.dirname(__file__), "static", "index.html")
     headers = {
         "Content-Security-Policy": (

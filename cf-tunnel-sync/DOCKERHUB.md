@@ -51,7 +51,7 @@ services:
     restart: unless-stopped
     environment:
       - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}
-      - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID}
+      - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-}
       - CLOUDFLARE_TUNNEL_NAME=${CLOUDFLARE_TUNNEL_NAME}
       - DOMAIN_NAME=${DOMAIN_NAME}
     volumes:
@@ -89,7 +89,7 @@ Enable any container for automatic synchronization by applying Docker labels:
 | Variable | Required | Default | Description |
 |---|:---:|---|---|
 | `CLOUDFLARE_API_TOKEN` | Yes | *none* | Cloudflare API Token with `Account:Cloudflare Tunnel:Edit`, `Zone:DNS:Edit`, and `Zone:Zone:Read` permissions. |
-| `CLOUDFLARE_ACCOUNT_ID` | Yes | *none* | Cloudflare Account ID. |
+| `CLOUDFLARE_ACCOUNT_ID` | No | *auto-detected* | Cloudflare Account ID (auto-detected from domain zone or token if omitted). |
 | `CLOUDFLARE_TUNNEL_NAME` | Yes* | *none* | Name of the Cloudflare Zero Trust Tunnel (*or specify `CLOUDFLARE_TUNNEL_ID`). |
 | `CLOUDFLARE_TUNNEL_ID` | No | *auto-detected* | Explicit Cloudflare Tunnel UUID. |
 | `CLOUDFLARE_ZONE_ID` | No | *auto-detected* | Explicit Zone ID for the root domain. |

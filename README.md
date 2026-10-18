@@ -65,8 +65,8 @@ Go to **Cloudflare Dashboard → My Profile → API Tokens → Create Token → 
 
 ![Cloudflare Token Setup](docs/screenshots/cloudflare-token-setup.png)
 
-> 💡 **Where do I find my Account ID?**  
-> In your Cloudflare dashboard, select your domain under **Websites**, scroll down on the **Overview** page, and copy **Account ID** from the right sidebar.
+> 💡 **Where do I find my Account ID? (Optional)**  
+> `cf-tunnel-sync` automatically discovers your Account ID from your domain zone or token! You only need to provide `CLOUDFLARE_ACCOUNT_ID` if your token has access to multiple accounts and you want to explicitly pin one (found in Cloudflare Dashboard → select your domain → Overview sidebar).
 
 ---
 
@@ -90,7 +90,7 @@ services:
     restart: unless-stopped
     environment:
       - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}
-      - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID}
+      # - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-} # Optional: auto-detected if omitted
       - CLOUDFLARE_TUNNEL_NAME=production-gateway
       - DOMAIN_NAME=example.com
       - LOG_LEVEL=INFO
