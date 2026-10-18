@@ -12,9 +12,7 @@ Automated, self-healing Cloudflare Zero Trust Tunnel & DNS CNAME synchronization
 [![Zero Dependencies](https://img.shields.io/badge/Dependencies-Zero%20External%20Deps-brightgreen?style=flat-square)](pyproject.toml)
 [![Architecture](https://img.shields.io/badge/Architecture-amd64%20%7C%20arm64-blueviolet?style=flat-square)](docs/support-matrix.md)
 
----
-
-### [Quickstart](#-60-second-quickstart) • [How It Works](#-how-it-works-the-controller-pattern) • [Safety & Ownership](#-safety-dns-ownership--security) • [Architecture](#-control-plane-vs-data-plane) • [Examples](#-ready-to-use-examples) • [Docs](docs/)
+### [Quickstart](#quickstart) • [How It Works](#how-it-works) • [Safety & Ownership](#safety-and-ownership) • [Architecture](#architecture) • [Examples](#examples) • [Docs](docs/)
 
 </div>
 
@@ -31,7 +29,7 @@ Automated, self-healing Cloudflare Zero Trust Tunnel & DNS CNAME synchronization
 
 ---
 
-## 🏗️ Control Plane vs. Data Plane
+## 🏗️ Control Plane vs. Data Plane <a id="architecture"></a><a id="control-plane-vs-data-plane"></a>
 
 A core design principle of `cf-docker-tunnel-sync` is the strict separation between the **Control Plane** and the **Data Plane**:
 
@@ -64,7 +62,7 @@ flowchart LR
 
 ---
 
-## ⚙️ How It Works (The Controller Pattern)
+## ⚙️ How It Works (The Controller Pattern) <a id="how-it-works"></a><a id="how-it-works-the-controller-pattern"></a>
 
 Modeled after modern Kubernetes controllers, `cf-docker-tunnel-sync` operates on a deterministic, self-healing reconciliation model:
 
@@ -75,7 +73,7 @@ Modeled after modern Kubernetes controllers, `cf-docker-tunnel-sync` operates on
 
 ---
 
-## 🛡️ Safety, DNS Ownership & Security
+## 🛡️ Safety, DNS Ownership & Security <a id="safety-and-ownership"></a><a id="safety-dns-ownership-security"></a><a id="safety-dns-ownership--security"></a>
 
 Installing an infrastructure daemon with Docker socket access and DNS write permissions requires absolute trust. Here is how `cf-docker-tunnel-sync` protects your infrastructure:
 
@@ -112,7 +110,7 @@ If the Docker daemon restarts or returns an empty container inventory, an automa
 
 ---
 
-## ⚡ 60-Second Quickstart
+## ⚡ 60-Second Quickstart <a id="quickstart"></a><a id="60-second-quickstart"></a>
 
 ### Step 1: Create `.env`
 Create a dedicated working directory and configure **The Essential Three** values:
@@ -233,7 +231,7 @@ docker compose run --rm -e DRY_RUN=true cf-tunnel-sync python app.py --dry-run
 
 ---
 
-## 📁 Ready-to-Use Examples
+## 📁 Ready-to-Use Examples <a id="examples"></a>
 
 | Example | Topology | Description |
 | :--- | :--- | :--- |
@@ -245,7 +243,7 @@ docker compose run --rm -e DRY_RUN=true cf-tunnel-sync python app.py --dry-run
 
 ---
 
-## 📚 Deep-Dive Documentation
+## 📚 Deep-Dive Documentation <a id="docs"></a>
 
 - 🏗️ **[Architecture, Safety & DNS Ownership](docs/architecture-and-safety.md)** — Reconciliation loop, ownership tagging, tombstoning, and circuit breakers.
 - 🏷️ **[Label & Configuration Reference](docs/label-reference.md)** — Exhaustive list of all Docker labels, environment variables, and auto-discovery precedence rules.
