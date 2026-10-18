@@ -65,3 +65,18 @@ uv run ruff format
    - Any images, screenshots, or diagrams referenced in documentation (such as in README.md or examples/) must reside in docs/screenshots/ or docs/assets/ and be committed alongside documentation changes.
    - Hermetic test suites automatically validate that all relative links, images, and document references exist on disk.
 
+5. **Scope Policy & Non-Goals:**
+   - Review [docs/product-boundaries.md](docs/product-boundaries.md) before submitting non-trivial PRs.
+   - Resist out-of-scope abstractions, third-party DNS synchronizers, or generic LAN proxying.
+
+6. **Redacted Logs Guidance:**
+   - When filing issues or posting terminal outputs, always redact Cloudflare API tokens, passwords, and webhook URLs (`[REDACTED]`).
+   - The sync engine includes automatic runtime redaction for logs and audit events.
+
+7. **Contributor PR Checklist:**
+   - [ ] Local tests pass cleanly: `uv run pytest`
+   - [ ] Linter & formatter clean: `uv run ruff check . && uv run ruff format .`
+   - [ ] Conventional Commit messages (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`)
+   - [ ] Linked GitHub issue (`Fixes #123`)
+   - [ ] Strictly zero breaking changes to existing environment variables, labels, or compose files
+

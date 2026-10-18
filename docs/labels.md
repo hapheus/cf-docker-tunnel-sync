@@ -22,6 +22,30 @@ Only containers connected to the shared gateway network (`cf-tunnel-net`) and ca
 
 ---
 
+## 🎯 Port-Discovery Precedence & Two-Label Recommendation (DX-07)
+
+`cf-tunnel-sync` resolves the upstream port using a deterministic precedence hierarchy:
+
+```
+1. Explicit Label:  cf.tunnel.port (or alias `port`)          --> HIGHEST PRECEDENCE
+2. Image Metadata:  Single EXPOSE port in Dockerfile        --> Used if exactly 1 port exposed
+3. Fallback:        Port 80 (with diagnostic warning logged) --> Used if 0 or >1 ports exposed
+```
+
+### ⚠️ Ambiguity with Multiple EXPOSE Ports
+When an upstream image exposes multiple ports (e.g., `EXPOSE 80 443` or `EXPOSE 8080 9090`), automatic port discovery cannot guess which port serves HTTP traffic. Without an explicit label, `cf-tunnel-sync` falls back to port `80` and logs a preflight diagnostic warning.
+
+### 🌟 The Golden Standard: The Explicit Two-Label Rule
+To ensure 100% deterministic routing across image updates and multi-port containers, **always declare both labels**:
+
+```yaml
+labels:
+  - "cf.tunnel.hostname=app.example.com"
+  - "cf.tunnel.port=8080"
+```
+
+---
+
 ## 💡 Practical Examples
 
 ### 1. Minimal Web Application (HTTP)

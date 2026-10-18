@@ -14,13 +14,16 @@ Get your self-hosted Docker services securely exposed through Cloudflare Tunnels
 Before beginning, ensure you have:
 1. **Docker Engine & Docker Compose v2+** installed on your host.
 2. A **Domain Name** active on Cloudflare (e.g., `example.com`).
-3. An **Account ID** and **Scoped Cloudflare API Token**:
+3. A **Scoped Cloudflare API Token**.
 
 ### Cloudflare Identifiers Explained
 
 | Identifier | Where to Find It | Required? |
 | :--- | :--- | :--- |
-| **Account ID** | Cloudflare Dashboard → select your domain under **Websites** → scroll down the right sidebar on **Overview**. | **Optional** (auto-discovered from domain zone or token; specify `CLOUDFLARE_ACCOUNT_ID` only if pinning a specific account) |
+| **API Token** | Cloudflare Dashboard → Profile → API Tokens. | **Yes** (Essential) |
+| **Tunnel Name** | You choose any name (e.g. `my-tunnel`). Auto-created on startup. | **Yes** (Essential) |
+| **Domain Name** | Your root domain zone in Cloudflare (e.g. `example.com`). | **Yes** (Essential) |
+| **Account ID** | Cloudflare Dashboard → select your domain under **Websites** → right sidebar. | **Optional** (auto-detected from domain zone or API token) |
 | **Zone ID** | Cloudflare Dashboard → right sidebar under Account ID. | **Optional** (auto-discovered via `Zone:Read` permission) |
 | **Tunnel ID** | Cloudflare Dashboard → Zero Trust → Networks → Tunnels. | **Optional** (auto-created if `CLOUDFLARE_TUNNEL_NAME` is used) |
 
@@ -40,13 +43,12 @@ Before beginning, ensure you have:
 
 ## Step 2: Deploy the Gateway Stack
 
-Create a working directory and a `.env` file:
+Create a working directory and a `.env` file containing only the **Essential Three** settings:
 
 ```bash
 mkdir -p ~/cf-tunnel && cd ~/cf-tunnel
 cat << 'EOF' > .env
 CLOUDFLARE_API_TOKEN=your_cloudflare_api_token_here
-# CLOUDFLARE_ACCOUNT_ID=your_32_character_account_id  # Optional: auto-detected if omitted
 CLOUDFLARE_TUNNEL_NAME=my-homelab-tunnel
 DOMAIN_NAME=example.com
 EOF
@@ -199,7 +201,10 @@ docker compose run --rm -e DRY_RUN=true cf-tunnel-sync python app.py --dry-run
 
 ## 📚 Related Documentation
 
-- ⚙️ **[Configuration Reference](docs/configuration.md)** — Exhaustive environment variable specification.
-- 🏷️ **[Docker Labels Reference](docs/labels.md)** — All supported container labels and advanced routing.
+- 🚀 **[Onboarding Existing Services](docs/onboarding.md)** — Step-by-step <10-minute guide to exposing existing Docker services.
+- ⚙️ **[Configuration Reference](docs/configuration.md)** — Exhaustive environment variable specification and auto-discovery rules.
+- 🏷️ **[Docker Labels Reference](docs/labels.md)** — All supported container labels, port precedence, and routing.
+- 🔧 **[Troubleshooting Guide](docs/troubleshooting.md)** — Task-based diagnosis, error codes, and practical remedies.
+- 📋 **[Support Matrix & Platform Limits](docs/support-matrix.md)** — Supported operating systems, Docker versions, and Cloudflare tiers.
 - 🏆 **[Multi-Compose Production Walkthrough](examples/02-multi-compose/README.md)** — Independent gateway and multi-stack architecture.
-- 📋 **[Compatibility Matrix](docs/COMPATIBILITY.md)** — Docker Engine and Compose compatibility baseline.
+- 🛡️ **[Security Architecture](docs/security.md)** — Docker socket isolation and credential protection.
