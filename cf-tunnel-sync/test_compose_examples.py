@@ -125,6 +125,108 @@ class TestComposeExamplesAndSchemaValidation(unittest.TestCase):
         self.assertIn("curl -I", doc)
         self.assertIn("docker compose down", doc)
 
+    def test_env_example_files_clean_and_present(self):
+        """Issue #125: Verify all example stacks define .env.example with zero real secrets."""
+        forbidden_secret_tokens = ["ghp_", "cf_pat_", "eyJ", "xoxb-", "hooks.slack.com/services/T"]
+
+        env_examples = sorted(glob.glob(os.path.join(self.root_dir, "examples/**/.env.example"), recursive=True))
+        self.assertGreaterEqual(len(env_examples), 5, "Every major example stack must define .env.example")
+
+        for path in env_examples:
+            rel = os.path.relpath(path, self.root_dir)
+            with open(path, "r", encoding="utf-8") as f:
+                content = f.read()
+
+            for bad_tok in forbidden_secret_tokens:
+                self.assertNotIn(
+                    bad_tok, content, f"Possible real secret or sensitive prefix found in {rel}: {bad_tok}"
+                )
+
+    def test_automated_compose_interpolation_smoke(self):
+        """Issue #126: Automated CI parse of every compose file with fixture environment."""
+        fixture_env = {
+            "DOMAIN_NAME": "test.example.com",
+            "CLOUDFLARE_API_TOKEN": "mock-pat-token-12345",
+            "CLOUDFLARE_TUNNEL_NAME": "ci-smoke-tunnel",
+            "CLOUDFLARE_TUNNEL_ID": "8a7b6c5d-4e3f-2a1b-0c9d-8e7f6a5b4c3d",
+            "CLOUDFLARED_TUNNEL_TOKEN": "mock-jwt-token",
+            "CF_NETWORK_NAME": "cf-tunnel-net",
+            "DASHBOARD_AUTH_ENABLED": "true",
+            "DASHBOARD_USERNAME": "admin",
+            "DASHBOARD_PASSWORD": "ci-password",
+            "BASIC_AUTH_USERNAME": "admin",
+            "BASIC_AUTH_PASSWORD": "ci-password",
+            "DASHBOARD_PORT": "8080",
+            "DASHBOARD_BIND_ADDRESS": "127.0.0.1",
+            "CLOUDFLARED_PROTOCOL": "auto",
+            "LOG_LEVEL": "INFO",
+        }
+
+        for path in self.compose_files:
+            rel = os.path.relpath(path, self.root_dir)
+            with open(path, "r", encoding="utf-8") as f:
+                raw_text = f.read()
+
+            # Simple regex-based shell variable interpolation simulating docker compose config
+            import re
+
+            def repl(m):
+                var = m.group(1) or m.group(2)
+                default = m.group(3) if len(m.groups()) >= 3 else None
+                return fixture_env.get(var, default or "")
+
+            interpolated = re.sub(
+                r"\$\{(\w+):-([^}]*)\}|\$\{(\w+)\}",
+                lambda m: fixture_env.get(m.group(1) or m.group(3), m.group(2) or ""),
+                raw_text,
+            )
+            parsed = yaml.safe_load(interpolated)
+            self.assertIsInstance(parsed, dict, f"Interpolated compose file {rel} must parse as valid YAML")
+            self.assertIn("services", parsed, f"Interpolated compose file {rel} must contain services section")
+
+    def test_mocked_cloudflare_smoke_run_for_compose_examples(self):
+        """Issue #126: Run mock reconcile smoke run asserting valid ChangePlans for example services."""
+        from reconcile import RemoteState, build_discovery_snapshot, compute_change_plan
+
+        # Simulate containers discovered from 01-single-compose and 02-multi-compose
+        discovered_services = [
+            {"container": "whoami", "hostname": "whoami.test.example.com", "service": "http://whoami:80"},
+            {"container": "website", "hostname": "web.test.example.com", "service": "http://website:80"},
+            {"container": "api", "hostname": "api.test.example.com", "service": "http://api:3000"},
+        ]
+        all_containers = [
+            {"name": "whoami", "state": "running", "hostname": "whoami.test.example.com", "is_tunneled": True},
+            {"name": "website", "state": "running", "hostname": "web.test.example.com", "is_tunneled": True},
+            {"name": "api", "state": "running", "hostname": "api.test.example.com", "is_tunneled": True},
+        ]
+
+        snapshot = build_discovery_snapshot(
+            services=discovered_services,
+            all_containers=all_containers,
+            docker_ok=True,
+            timestamp=1792311900.0,
+        )
+        remote = RemoteState(
+            tunnel_id="smoke-tunnel-id",
+            tunnel_name="smoke-tunnel",
+            zone_id="smoke-zone-id",
+            tunnel_target="smoke-tunnel-id.cfargotunnel.com",
+            existing_ingress_rules=[],
+            existing_dns_records=[],
+        )
+        plan = compute_change_plan(
+            snapshot=snapshot,
+            remote=remote,
+            tombstones={},
+            now=1792311900.0,
+            dry_run=True,
+        )
+
+        self.assertEqual(plan.summary.total_services_discovered, 3)
+        self.assertEqual(plan.summary.ingress_creates, 3)
+        self.assertEqual(plan.summary.dns_creates, 3)
+        self.assertEqual(len(plan.final_ingress_rules), 4)  # 3 services + 404 catch-all
+
 
 if __name__ == "__main__":
     unittest.main()

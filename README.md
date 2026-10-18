@@ -229,13 +229,18 @@ DASHBOARD_PASSWORD=your-secure-password
 
 ## 📚 Detailed Reference Documentation
 
-- ⚙️ **[Configuration Reference](docs/configuration.md)** — Exhaustive list of all environment variables, flags, and circuit breakers.
-- 🏷️ **[Docker Labels Reference](docs/labels.md)** — Comprehensive container label guide (HTTP/HTTPS, SNI, multi-domain routing, TLS settings).
-- 🛡️ **[Security Architecture & Socket Hardening](docs/security.md)** — Docker socket tradeoffs, least-privilege socket proxy, and credential redaction.
-- 🔄 **[Operations, Teardown & Uninstall](docs/operations.md)** — Downtime semantics, tombstoning lifecycle, and clean uninstallation runbook.
+- 🚀 **[Onboarding Existing Services](docs/onboarding.md)** — Step-by-step <10-minute guide to exposing existing services with zero port-forwarding.
+- ⚙️ **[Configuration Reference](docs/configuration.md)** — Exhaustive list of environment variables, auto-discovery rules, and preserved aliases.
+- 🏷️ **[Docker Labels Reference](docs/labels.md)** — Container labels, port discovery precedence, and golden 2-label rule.
+- 🔧 **[Troubleshooting & Diagnostics](docs/troubleshooting.md)** — Symptom-to-fix diagnostic runbook covering 9 common operational scenarios.
+- 📋 **[Support Matrix & Platform Limits](docs/support-matrix.md)** — Supported operating systems, Docker engines, Compose minimums, and Cloudflare tiers.
+- 🛡️ **[Security Architecture & Socket Hardening](docs/security.md)** — Docker socket security, least-privilege socket proxy, and token redaction.
+- 🔒 **[Release Security, Provenance & Rollbacks](docs/release-security.md)** — Container artifact versioning, immutable digests, SBOM generation, and safe rollback drills.
+- 🔄 **[Operations, Headless Runbook & Teardown](docs/operations.md)** — CLI diagnostics, headless observability, tombstone lifecycle, and disaster recovery.
+- 🎯 **[Product Boundaries & Non-Goals](docs/product-boundaries.md)** — Clear distinction between core mission and out-of-scope features.
 - 🏆 **[Flagship Multi-Compose Walkthrough](examples/02-multi-compose/README.md)** — Production-grade multi-stack guide with zero host-port exposure.
 - 📖 **[10-Minute Canonical Quickstart](QUICKSTART.md)** — Rapid standalone walkthrough.
-- 📋 **[Compatibility Baseline](docs/COMPATIBILITY.md)** — Verified Docker Compose versions and system matrix.
+- 📋 **[Compatibility Baseline](docs/COMPATIBILITY.md)** — Zero breaking changes policy and verified golden topologies.
 
 ---
 
