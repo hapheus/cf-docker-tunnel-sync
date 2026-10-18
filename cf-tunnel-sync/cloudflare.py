@@ -73,6 +73,7 @@ class CloudflareClient:
                         continue
 
                     if resp.is_error:
+                        metrics_registry.record_cloudflare_error(resp.status_code)
                         try:
                             err_json = resp.json()
                             errors = err_json.get("errors", [])
@@ -177,6 +178,7 @@ class CloudflareClient:
                         continue
 
                     if resp.is_error:
+                        metrics_registry.record_cloudflare_error(resp.status_code)
                         try:
                             err_json = resp.json()
                             errors = err_json.get("errors", [])

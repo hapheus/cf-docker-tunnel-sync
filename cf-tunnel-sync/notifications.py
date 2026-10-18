@@ -44,6 +44,10 @@ class NotificationDispatcher:
 
         # In-memory alert cache: event_hash -> last_dispatched_timestamp
         self._sent_cache: Dict[str, float] = {}
+        self.last_delivery_success: Optional[bool] = None
+        self.last_delivery_time: Optional[float] = None
+        self.last_delivery_status: Optional[str] = None
+        self.consecutive_failures: int = 0
 
     @property
     def is_enabled(self) -> bool:
@@ -54,6 +58,21 @@ class NotificationDispatcher:
     def resolved_type(self) -> str:
         """Return resolved webhook type (discord, slack, generic)."""
         return detect_webhook_type(self.webhook_url, self.explicit_type)
+
+    def get_status(self) -> Dict[str, Any]:
+        """Return safe, non-sensitive delivery status (Issue #122)."""
+        now = time.time()
+        cooldown_active = any((now - t) < self.cooldown_seconds for t in self._sent_cache.values())
+        return {
+            "configured": self.is_enabled,
+            "provider": self.resolved_type if self.is_enabled else "none",
+            "last_delivery_success": self.last_delivery_success,
+            "last_delivery_time": self.last_delivery_time,
+            "last_delivery_status": self.last_delivery_status,
+            "consecutive_failures": self.consecutive_failures,
+            "cooldown_active": cooldown_active,
+            "cooldown_seconds": self.cooldown_seconds,
+        }
 
     def _generate_event_hash(self, event_type: str, title: str) -> str:
         raw = f"{event_type}:{title}"
@@ -169,14 +188,44 @@ class NotificationDispatcher:
                 if resp.status_code >= 400:
                     err_msg = f"Webhook POST failed with status {resp.status_code}: {resp.text[:200]}"
                     logger.warning(err_msg)
+                    self.last_delivery_success = False
+                    self.last_delivery_time = time.time()
+                    self.last_delivery_status = err_msg
+                    self.consecutive_failures += 1
+                    try:
+                        from metrics import metrics_registry
+
+                        metrics_registry.record_webhook_delivery("failure")
+                    except Exception:
+                        pass
                     return False, err_msg
 
                 self.mark_sent(event_type, title)
                 logger.info("Successfully dispatched webhook alert: '%s'", title)
+                self.last_delivery_success = True
+                self.last_delivery_time = time.time()
+                self.last_delivery_status = "Delivered successfully"
+                self.consecutive_failures = 0
+                try:
+                    from metrics import metrics_registry
+
+                    metrics_registry.record_webhook_delivery("success")
+                except Exception:
+                    pass
                 return True, "Alert delivered successfully"
         except Exception as e:
             err_msg = f"Webhook dispatch error: {e}"
             logger.warning(err_msg)
+            self.last_delivery_success = False
+            self.last_delivery_time = time.time()
+            self.last_delivery_status = err_msg
+            self.consecutive_failures += 1
+            try:
+                from metrics import metrics_registry
+
+                metrics_registry.record_webhook_delivery("failure")
+            except Exception:
+                pass
             return False, err_msg
 
     def dispatch_sync(
@@ -204,14 +253,44 @@ class NotificationDispatcher:
                 if resp.status_code >= 400:
                     err_msg = f"Webhook POST failed with status {resp.status_code}: {resp.text[:200]}"
                     logger.warning(err_msg)
+                    self.last_delivery_success = False
+                    self.last_delivery_time = time.time()
+                    self.last_delivery_status = err_msg
+                    self.consecutive_failures += 1
+                    try:
+                        from metrics import metrics_registry
+
+                        metrics_registry.record_webhook_delivery("failure")
+                    except Exception:
+                        pass
                     return False, err_msg
 
                 self.mark_sent(event_type, title)
                 logger.info("Successfully dispatched webhook alert: '%s'", title)
+                self.last_delivery_success = True
+                self.last_delivery_time = time.time()
+                self.last_delivery_status = "Delivered successfully"
+                self.consecutive_failures = 0
+                try:
+                    from metrics import metrics_registry
+
+                    metrics_registry.record_webhook_delivery("success")
+                except Exception:
+                    pass
                 return True, "Alert delivered successfully"
         except Exception as e:
             err_msg = f"Webhook dispatch error: {e}"
             logger.warning(err_msg)
+            self.last_delivery_success = False
+            self.last_delivery_time = time.time()
+            self.last_delivery_status = err_msg
+            self.consecutive_failures += 1
+            try:
+                from metrics import metrics_registry
+
+                metrics_registry.record_webhook_delivery("failure")
+            except Exception:
+                pass
             return False, err_msg
 
 

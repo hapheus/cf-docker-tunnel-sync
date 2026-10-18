@@ -63,6 +63,7 @@ This document provides a comprehensive reference for all environment variables s
 | `DASHBOARD_AUTH_ENABLED` | Optional | `false` | Enables HTTP Basic Authentication for accessing the web dashboard and status endpoints. |
 | `DASHBOARD_USERNAME` | Optional | `admin` | Username required when `DASHBOARD_AUTH_ENABLED=true` (`BASIC_AUTH_USERNAME` is also accepted). |
 | `DASHBOARD_PASSWORD` | Optional | — | Password required when `DASHBOARD_AUTH_ENABLED=true` (`BASIC_AUTH_PASSWORD` is also accepted). |
+| `METRICS_AUTH_ENABLED` | Optional | `false` | Enables HTTP Basic Authentication on `/metrics` using dashboard credentials. Defaults to `false` for 100% backward compatibility with unauthenticated Prometheus scrapers. |
 | `SYNC_BACKEND_HOST` | Optional | `cf-tunnel-sync` | For companion `cf-tunnel-dashboard` container: hostname of the `cf-tunnel-sync` API backend. |
 | `SYNC_BACKEND_PORT` | Optional | `8090` | For companion `cf-tunnel-dashboard` container: port of the `cf-tunnel-sync` API backend. |
 

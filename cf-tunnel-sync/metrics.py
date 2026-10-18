@@ -30,11 +30,36 @@ class PrometheusRegistry:
             "1 if blast-radius safety deletion guard is currently tripped, 0 otherwise",
         )
         self.register("cf_tunnel_api_requests_total", "counter", "Total Cloudflare API HTTP requests executed")
+        self.register(
+            "cf_tunnel_sync_last_success_timestamp",
+            "gauge",
+            "Unix timestamp of the most recent successful sync completion",
+        )
+        self.register("cf_tunnel_sync_failures_total", "counter", "Total count of failed sync executions")
+        self.register(
+            "cf_tunnel_dns_operations_total",
+            "counter",
+            "Total DNS operations by type (create, update, delete, protect)",
+        )
+        self.register(
+            "cf_tunnel_ingress_operations_total",
+            "counter",
+            "Total Ingress route operations by type (create, update, delete)",
+        )
+        self.register("cf_tunnel_docker_connected", "gauge", "1 if Docker daemon is connected, 0 otherwise")
+        self.register(
+            "cf_tunnel_webhook_deliveries_total",
+            "counter",
+            "Total webhook alert deliveries by status (success, failure)",
+        )
+        self.register("cf_tunnel_cloudflare_errors_total", "counter", "Total Cloudflare API errors by HTTP status code")
 
         # Initialize defaults
         self.set_gauge("cf_tunnel_safety_guard_tripped", 0.0)
         self.set_gauge("cf_tunnel_services_discovered", 0.0)
         self.set_gauge("cf_tunnel_sync_duration_seconds", 0.0)
+        self.set_gauge("cf_tunnel_sync_last_success_timestamp", 0.0)
+        self.set_gauge("cf_tunnel_docker_connected", 1.0)
 
     def register(self, name: str, metric_type: str, help_text: str):
         with self._lock:
@@ -72,6 +97,28 @@ class PrometheusRegistry:
         self.set_gauge("cf_tunnel_sync_duration_seconds", duration)
         self.set_gauge("cf_tunnel_services_discovered", float(discovered_count))
         self.set_gauge("cf_tunnel_safety_guard_tripped", 1.0 if safety_tripped else 0.0)
+        if status == "success":
+            import time
+
+            self.set_gauge("cf_tunnel_sync_last_success_timestamp", time.time())
+        else:
+            self.inc_counter("cf_tunnel_sync_failures_total", 1.0)
+
+    def record_dns_op(self, operation: str, count: float = 1.0):
+        """Record DNS operation count (create, update, delete, protect)."""
+        self.inc_counter("cf_tunnel_dns_operations_total", count, {"operation": operation})
+
+    def record_ingress_op(self, operation: str, count: float = 1.0):
+        """Record Ingress rule operation count (create, update, delete)."""
+        self.inc_counter("cf_tunnel_ingress_operations_total", count, {"operation": operation})
+
+    def record_webhook_delivery(self, status: str):
+        """Record webhook delivery event (success, failure)."""
+        self.inc_counter("cf_tunnel_webhook_deliveries_total", 1.0, {"status": status})
+
+    def record_cloudflare_error(self, status_code: int):
+        """Record Cloudflare API error occurrence."""
+        self.inc_counter("cf_tunnel_cloudflare_errors_total", 1.0, {"status_code": str(status_code)})
 
     def generate_exposition(self) -> str:
         """Render metrics into standard Prometheus text exposition format (version 0.0.4)."""
