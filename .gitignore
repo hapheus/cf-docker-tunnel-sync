@@ -24,3 +24,16 @@ scratch-tests/
 .devenv.*
 .direnv/
 .pre-commit-config.yaml
+
+# AI agent instructions, context metadata, and scratchpads
+*GEMINI*.md
+*AGENT*.md
+*AGENTS*.md
+*SKILL*.md
+.gemini/
+.claude/
+.cursor/
+.windsurf/
+.system_generated/
+scratch/
+
