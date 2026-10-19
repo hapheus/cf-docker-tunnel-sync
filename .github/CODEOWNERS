@@ -1,0 +1,11 @@
+# Global owner for the repository
+* @hapheus
+
+# GitHub Actions workflows & security policies
+/.github/workflows/ @hapheus
+/.github/dependabot.yml @hapheus
+/SECURITY.md @hapheus
+
+# Core synchronization and dashboard code
+/cf-tunnel-sync/ @hapheus
+/cf-tunnel-dashboard/ @hapheus

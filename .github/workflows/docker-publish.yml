@@ -8,9 +8,15 @@ on:
       - 'v*.*.*'
   workflow_dispatch:
 
+permissions: read-all
+
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
     strategy:
       matrix:
         include:
@@ -26,7 +32,13 @@ jobs:
             short_desc: "Web management dashboard for cf-docker-tunnel-sync"
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install Cosign
+        if: github.event_name != 'pull_request'
+        uses: sigstore/cosign-installer@053f9b74638557590800a301da1ba82351507e2c # v3.8.1
 
       - name: Check Secrets Presence
         run: |
@@ -42,20 +54,20 @@ jobs:
           fi
 
       - name: Log in to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
 
       - name: Extract Docker Metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
         with:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}
           tags: |
@@ -64,7 +76,8 @@ jobs:
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
       - name: Build and Push Docker Image
-        uses: docker/build-push-action@v6
+        id: build-and-push
+        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
@@ -73,10 +86,19 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           platforms: linux/amd64,linux/arm64
 
+      - name: Sign published Docker image with Cosign
+        if: ${{ github.event_name != 'pull_request' && secrets.DOCKERHUB_USERNAME != '' }}
+        env:
+          DIGEST: ${{ steps.build-and-push.outputs.digest }}
+          IMAGE_REPO: ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}
+        run: |
+          echo "Signing container digest: ${IMAGE_REPO}@${DIGEST}"
+          cosign sign --yes "${IMAGE_REPO}@${DIGEST}"
+
       - name: Update Docker Hub Description
         if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         continue-on-error: true
-        uses: peter-evans/dockerhub-description@v4
+        uses: peter-evans/dockerhub-description@e98e4d1628a5f3be2be7c231e50981aee98723ae # v4.0.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
