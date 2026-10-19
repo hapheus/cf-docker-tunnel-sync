@@ -7,10 +7,14 @@
 Automated, self-healing Cloudflare Zero Trust Tunnel & DNS CNAME synchronization for Docker containers.
 
 [![GitHub Release](https://img.shields.io/github/v/release/hapheus/cf-docker-tunnel-sync?style=flat-square&color=blue)](https://github.com/hapheus/cf-docker-tunnel-sync/releases)
-[![CI Status](https://img.shields.io/github/actions/workflow/status/hapheus/cf-docker-tunnel-sync/ci.yml?branch=main&style=flat-square)](https://github.com/hapheus/cf-docker-tunnel-sync/actions)
+[![Docker Pulls](https://img.shields.io/docker/pulls/hapheus/cf-tunnel-sync?style=flat-square)](https://hub.docker.com/r/hapheus/cf-tunnel-sync)
+[![Docker Image Size](https://img.shields.io/docker/image-size/hapheus/cf-tunnel-sync/latest?style=flat-square)](https://hub.docker.com/r/hapheus/cf-tunnel-sync)
+[![GitHub Stars](https://img.shields.io/github/stars/hapheus/cf-docker-tunnel-sync?style=flat-square)](https://github.com/hapheus/cf-docker-tunnel-sync/stargazers)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
-[![Zero Dependencies](https://img.shields.io/badge/Dependencies-Zero%20External%20Deps-brightgreen?style=flat-square)](pyproject.toml)
-[![Architecture](https://img.shields.io/badge/Architecture-amd64%20%7C%20arm64-blueviolet?style=flat-square)](docs/support-matrix.md)
+
+[![CI Status](https://img.shields.io/github/actions/workflow/status/hapheus/cf-docker-tunnel-sync/ci.yml?branch=main&style=flat-square)](https://github.com/hapheus/cf-docker-tunnel-sync/actions)
+[![Daily Live Image Verification](https://github.com/hapheus/cf-docker-tunnel-sync/actions/workflows/daily-image-verification.yml/badge.svg)](https://github.com/hapheus/cf-docker-tunnel-sync/actions/workflows/daily-image-verification.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/hapheus/cf-docker-tunnel-sync/badge)](https://scorecard.dev/viewer/?uri=github.com/hapheus/cf-docker-tunnel-sync)
 
 ### [Quickstart](#quickstart) • [How It Works](#how-it-works) • [Safety & Ownership](#safety-and-ownership) • [Architecture](#architecture) • [Examples](#examples) • [Docs](docs/)
 
