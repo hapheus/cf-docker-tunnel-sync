@@ -1,19 +1,16 @@
 services:
-  # Internal Database (isolated, never exposed to tunnel)
   db:
     image: postgres:16-alpine
     container_name: app-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-appuser}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-apppassword}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-appdb}
     volumes:
       - db_data:/var/lib/postgresql/data
     networks:
       - internal-backend
-
-  # Web Application (connects to internal database AND external gateway network)
   web:
     image: traefik/whoami:latest
     container_name: my-app-web
@@ -21,22 +18,16 @@ services:
     depends_on:
       - db
     labels:
-      - "cf.tunnel.enable=true"
-      - "cf.tunnel.hostname=app.${DOMAIN_NAME}"
-      - "cf.tunnel.port=80"
+      - cf.tunnel.hostname=app.${DOMAIN_NAME}
+      - cf.tunnel.port=80
     networks:
       - internal-backend
       - cf-tunnel-net
-
 networks:
-  # Private network for database and web backend
   internal-backend:
     driver: bridge
-
-  # Shared external network connected to cloudflared
   cf-tunnel-net:
-    name: cf-tunnel-net
+    name: ${CF_NETWORK_NAME:-cf-tunnel-net}
     external: true
-
 volumes:
-  db_data:
+  db_data: {}

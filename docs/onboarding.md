@@ -1,135 +1,78 @@
-# Onboarding Existing Services in <10 Minutes
+# Expose an existing Docker service
 
-This guide walks you through exposing an existing Dockerized service (such as Nextcloud, Grafana, Home Assistant, Gitea, or a custom web app) through your Cloudflare Tunnel gateway in **under 10 minutes**, with zero port-forwarding on your router and zero firewall pinholes.
+This guide assumes the gateway and `cloudflared` are already running and share a Docker network named `cf-tunnel-net`. For a first installation, start with the [Quickstart](../QUICKSTART.md) or the [separate-stack walkthrough](../examples/02-multi-stack-external-net/README.md).
 
----
+You need a hostname in the configured Cloudflare zone and the port your application listens on inside its container. Read the [current safety limitations](architecture-and-safety.md#current-limitations) before attaching existing Cloudflare resources.
 
-## The 3-Step Recipe
+## Connect the service
 
-Exposing any existing Docker service requires exactly three actions:
-1. Connect the service to the gateway network (`cf-tunnel-net`).
-2. Add two labels to the service.
-3. Restart the service container.
-
-```mermaid
-flowchart LR
-    A["Existing Service Container"] -- "1. Join Network" --> B["cf-tunnel-net"]
-    A -- "2. Add Labels" --> C["cf-tunnel-sync"]
-    C -- "3. Automated API Call" --> D["Cloudflare Tunnel & DNS"]
-    D --> E["https://app.yourdomain.com"]
-```
-
----
-
-## 🛡️ Zero-Damage Guarantee for Existing Cloudflare Setups
-
-If you already use Cloudflare for other websites, services, or tunnels, you might worry: *Could `cf-docker-tunnel-sync` overwrite my DNS records, delete other routes, or break my production setup?*
-
-**No.** The synchronizer is designed with strict safeguards:
-- **Your other DNS records are safe:** The daemon **never deletes or modifies** any DNS record (A, AAAA, MX, TXT, or unmanaged CNAMEs) that it did not create. It tags its own CNAME records using Cloudflare record comments (`cf-tunnel-sync:<tunnel_name>`), leaving all your other DNS records untouched.
-- **Your other Tunnels are isolated:** The daemon only operates on the specific tunnel defined by `CLOUDFLARE_TUNNEL_NAME`. All other tunnels in your account are completely ignored.
-- **Existing manual ingress rules are preserved:** If the tunnel already contains manually configured ingress rules, the daemon detects them and preserves them as read-only (`NOOP`).
-- **Circuit breakers prevent accidental deletions:** Deletions are capped at 3 per sync cycle (`MAX_DELETIONS_PER_SYNC=3`). If containers are removed en masse or Docker crashes, sync halts safely without deleting your routes.
-- **Test with zero risk (`DRY_RUN=true`):** You can set `DRY_RUN=true` in `.env` to preview exactly what the tool plans to do before allowing any write requests to Cloudflare.
-
----
-
-## Step-by-Step Walkthrough
-
-### Step 1: Attach Your Service to `cf-tunnel-net`
-
-In your existing service's `docker-compose.yml`, define the external network and attach your service to it:
+For an HTTP service listening on port 8080, adapt its Compose definition:
 
 ```yaml
 services:
   my-app:
-    image: my-existing-image:latest
+    image: your-application-image:your-version
     restart: unless-stopped
     networks:
       - default
-      - cf-tunnel-net # <--- Attach to gateway network
+      - cf-tunnel-net
     labels:
-      - "cf.tunnel.enable=true"
-      - "cf.tunnel.hostname=app.yourdomain.com"
+      cf.tunnel.hostname: app.example.com
+      cf.tunnel.port: "8080"
 
 networks:
   cf-tunnel-net:
-    external: true # <--- References the network created by cf-docker-tunnel-sync
+    external: true
 ```
 
-> [!TIP]
-> Notice that you **do not** need to expose any ports on the host machine (no `ports: "8080:80"` mapping). Traffic routes internally across the private Docker bridge network directly into Cloudflare's tunnel connector.
+Replace the image, hostname, and port. Keep the service's existing configuration and networks. The external network must already exist; start the gateway before the application stack.
 
-### Step 2: Apply the Two Golden Labels
+No host `ports` mapping is required for tunnel traffic. Keep one if you also need deliberate direct LAN access.
 
-Add the two essential labels:
-- `cf.tunnel.enable=true` — Signals to `cf-tunnel-sync` to manage this container.
-- `cf.tunnel.hostname=app.yourdomain.com` — Defines the public HTTPS hostname.
+Apply the changes from the application's Compose directory:
 
-#### What if the container exposes multiple internal ports?
-If your image exposes multiple ports (e.g. `80` and `443` or `8080` and `9000`), specify which port to route to:
+```bash
+docker compose up -d my-app
+```
+
+Changing labels or networks requires container recreation. A plain restart does not apply those changes.
+
+## Verify routing
+
+From the gateway directory, inspect both services:
+
+```bash
+docker compose logs --tail=50 cf-tunnel-sync cloudflared
+```
+
+Look for the hostname in discovery and for ingress/DNS errors. The [status API](api.md) also reports discovered services and diagnostic stages.
+
+From a client with network access to the public hostname:
+
+```bash
+curl -I https://app.example.com
+```
+
+Expect the application's normal response, such as 200, a redirect, or an authentication challenge. An HTTP response alone does not prove the intended access policy is enforced; verify authorization separately.
+
+For connection errors, see [troubleshooting](troubleshooting.md).
+
+## HTTPS origins
+
+If the application serves HTTPS inside Docker, set the protocol as well as the port:
+
 ```yaml
 labels:
-  - "cf.tunnel.enable=true"
-  - "cf.tunnel.hostname=app.yourdomain.com"
-  - "cf.tunnel.port=8080" # Explicit internal port
+  cf.tunnel.hostname: app.example.com
+  cf.tunnel.port: "8443"
+  cf.tunnel.protocol: https
+  cf.tunnel.originRequest.noTLSVerify: "true"
 ```
 
-### Step 3: Deploy & Verify
+The last label skips certificate verification for self-signed origins. Prefer verified certificates where possible. See [origin TLS settings](labels.md#https-origins) for server-name and Host-header overrides.
 
-Recreate your container:
-```bash
-docker compose up -d
-```
+## Multiple gateways and private applications
 
-`cf-tunnel-sync` detects the Docker event, provisions the ingress rule, and creates the proxied CNAME record in Cloudflare DNS within seconds.
+Set `cf.tunnel.name` to the desired gateway's tunnel name when more than one synchronizer can discover the container.
 
-Verify via curl:
-```bash
-curl -I https://app.yourdomain.com
-```
-
----
-
-## Novice Friction Points & Solutions
-
-Usability testing across first-time Docker users identified recurring questions and friction points. Here are the immediate answers:
-
-### 1. "Do I still need `ports: 8080:80` in my compose file?"
-**No.** Host port publishing is completely unnecessary and opens an unauthenticated doorway on your host. Remove the `ports:` block entirely unless you need direct LAN access.
-
-### 2. "Why does `docker compose up` fail with `network cf-tunnel-net not found`?"
-The gateway network must exist before child stacks can attach to it as `external: true`. Ensure you started your gateway stack first (`docker compose up -d` in your gateway directory), or create the network manually once:
-```bash
-docker network create cf-tunnel-net
-```
-
-### 3. "My service uses HTTPS internally (self-signed cert). How do I avoid TLS errors?"
-If your container originates an HTTPS service (like Proxmox, TrueNAS, or Unifi Controller) with a self-signed TLS certificate, tell Cloudflare to skip origin verification:
-```yaml
-labels:
-  - "cf.tunnel.enable=true"
-  - "cf.tunnel.hostname=router.yourdomain.com"
-  - "cf.tunnel.port=8443"
-  - "cf.tunnel.originRequest.noTLSVerify=true"
-```
-
-### 4. "How do I secure an internal admin dashboard with Cloudflare Zero Trust?"
-Tag your service with an Access policy tag:
-```yaml
-labels:
-  - "cf.tunnel.enable=true"
-  - "cf.tunnel.hostname=admin.yourdomain.com"
-  - "cf.tunnel.access.policy=internal-team-only"
-```
-
----
-
-## 5-Minute Checklist for Successful Onboarding
-
-| Verification | Command / Check | Expected Result |
-| :--- | :--- | :--- |
-| Network attached | `docker inspect <container> --format '{{json .NetworkSettings.Networks}}'` | Contains `"cf-tunnel-net"` |
-| Labels detected | `docker compose logs -f cf-tunnel-sync` | `Plan: 1 to add, 0 to update, 0 to delete` |
-| Cloudflare sync | `docker compose logs -f cf-tunnel-sync` | `State reconciled successfully` |
-| Public reachability | `curl -s -o /dev/null -w "%{http_code}" https://app.yourdomain.com` | `200` (or `302`/`401` if auth protected) |
+For private applications, configure application authentication or Cloudflare Access separately. An Access label is only metadata and does not secure the route. See [security](security.md#public-applications-and-access-metadata).

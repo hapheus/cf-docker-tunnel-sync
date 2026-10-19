@@ -4,12 +4,15 @@ services:
     restart: always
     command: tunnel --no-autoupdate run --token-file /etc/cloudflared/token
     volumes:
-      - cf_token_data:/etc/cloudflared
+      - cf_token_data:/etc/cloudflared:ro
     networks:
       - cf-tunnel-net
     extra_hosts:
-      - "host.docker.internal:host-gateway"
-
+      - host.docker.internal:host-gateway
+    depends_on:
+      cf-tunnel-sync:
+        condition: service_healthy
+    container_name: ${CLOUDFLARED_CONTAINER_NAME:-personal-cloudflared}
   cf-tunnel-sync:
     image: hapheus/cf-tunnel-sync:latest
     restart: always
@@ -18,39 +21,42 @@ services:
       - DOMAIN_NAME=${DOMAIN_NAME}
       - CLOUDFLARE_TUNNEL_NAME=${CLOUDFLARE_TUNNEL_NAME:-personal-tunnel}
       - POLL_INTERVAL=30
+      - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-}
+      - CF_NETWORK_NAME=${CF_NETWORK_NAME:-cf-tunnel-net-personal}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - CLOUDFLARED_CONTAINER_NAME=${CLOUDFLARED_CONTAINER_NAME:-personal-cloudflared}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - cf_token_data:/etc/cloudflared
     expose:
-      - "8090"
+      - '8090'
     networks:
       - cf-tunnel-net
     healthcheck:
-      test: ["CMD", "python", "healthcheck.py"]
+      test:
+        - CMD-SHELL
+        - test -s /etc/cloudflared/token && python healthcheck.py
       interval: 10s
       timeout: 5s
       retries: 3
       start_period: 5s
-
   cf-tunnel-dashboard:
     image: hapheus/cf-tunnel-dashboard:latest
     restart: always
     environment:
       - DASHBOARD_AUTH_ENABLED=${DASHBOARD_AUTH_ENABLED:-true}
       - BASIC_AUTH_USERNAME=${BASIC_AUTH_USERNAME}
-      - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD}
+      - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-}
     ports:
-      - "${DASHBOARD_PORT:-8080}:80"
+      - ${DASHBOARD_BIND_ADDRESS:-0.0.0.0}:${DASHBOARD_PORT:-8080}:80
     networks:
       - cf-tunnel-net
     depends_on:
       cf-tunnel-sync:
         condition: service_healthy
-
 networks:
   cf-tunnel-net:
     name: ${CF_NETWORK_NAME:-cf-tunnel-net-personal}
     driver: bridge
-
 volumes:
-  cf_token_data:
+  cf_token_data: {}

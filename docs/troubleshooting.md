@@ -1,203 +1,119 @@
-# Task-Based Troubleshooting Guide
+# Troubleshooting
 
-This guide provides deterministic **Symptom → Check → Fix** workflows for operational issues with `cf-docker-tunnel-sync`.
+Run commands from the gateway's Compose directory unless a step says otherwise. API examples assume the root Compose host port 8080 and user `admin`; replace them for your deployment. `--user admin` prompts for the password.
 
----
-
-## 🔍 Diagnostic Toolkit Quick-Reference
-
-Before diving into specific symptoms, run the non-mutating preflight validation mode:
+Start with:
 
 ```bash
-docker exec cf-tunnel-sync python app.py --preflight
-```
-*Expected Output:*
-```text
-🔍 Starting Non-Mutating Preflight Validation (R01)
-  [PASS] Docker Socket Check
-  [PASS] Cloudflare Token Check
-  [PASS] Domain Zone Check
-  [PASS] Tunnel Registration Check
-  [PASS] Network Topology Check
-  [PASS] Ingress Route Syntax Check
-==================================================
-✅ Preflight validation PASSED: 0 errors, 0 warnings
-==================================================
+docker compose ps
+docker compose logs --tail=100 cf-tunnel-sync cloudflared
+curl --fail-with-body --user admin http://localhost:8080/api/status
 ```
 
----
+For non-mutating inspection of the configured Docker and Cloudflare resources:
 
-## 🛠️ Symptom Workflows
+```bash
+docker compose exec cf-tunnel-sync python app.py --preflight
+```
 
-### 1. DNS Not Resolving (`NXDOMAIN` or Name Not Found)
+Preflight can fail for a missing tunnel before normal startup has created it. Passing preflight does not prove DNS write permission or application reachability. Dry-run is not a complete write barrier; read the [initialization limitation](architecture-and-safety.md#current-limitations).
 
-- **Symptom:** Browsing `https://app.example.com` returns `DNS_PROBE_FINISHED_NXDOMAIN`.
-- **Check:**
-  ```bash
-  # Check if CNAME record was published to Cloudflare DNS
-  dig CNAME app.example.com @1.1.1.1 +short
-  ```
-- **Diagnostic Inspection:**
-  Check sync engine logs for DNS mutations:
-  ```bash
-  docker logs cf-tunnel-sync --tail 50 | grep "DNS"
-  ```
-- **Fix:**
-  1. Ensure container label `cf.tunnel.hostname` is formatted correctly with your managed domain zone (e.g., `cf.tunnel.hostname=app.example.com`).
-  2. If the domain zone does not match `DOMAIN_NAME`, ensure your API token has `Zone:Read` permission across the target zone.
-  3. Trigger an immediate reconciliation cycle:
-     ```bash
-     curl -s -X POST http://localhost:8080/api/sync
-     ```
+## Service is not discovered
 
----
+Check the application's labels, running state, domain, and tunnel selection:
 
-### 2. Cloudflare Error 502 Bad Gateway or Error 1033
+```bash
+docker inspect <application-container> --format '{{json .Config.Labels}}'
+```
 
-- **Symptom:** Cloudflare branded error page displays "502 Bad Gateway" or "Error 1033: Argo Tunnel error".
-- **Check:**
-  Verify whether `cloudflared` can reach the container port via HTTP inside Docker:
-  ```bash
-  docker exec cloudflared nc -zv <container-name> <port>
-  # Or with curl
-  docker exec cloudflared curl -I http://<container-name>:<port>
-  ```
-- **Expected Outcome:** `HTTP/1.1 200 OK` or `Connection open`.
-- **Fix:**
-  1. **Disjoint Networks:** Both `cloudflared` and your target container must be attached to the shared bridge network (`cf-tunnel-net`):
-     ```bash
-     docker network inspect cf-tunnel-net | grep -E "(cloudflared|<container-name>)"
-     ```
-     If missing, attach your container:
-     ```bash
-     docker network connect cf-tunnel-net <container-name>
-     ```
-  2. **Wrong Port:** If your application listens on port `3000` or `8080`, declare `cf.tunnel.port=3000`. By default, unlabelled multi-port images fall back to port `80`.
+Use a single fully qualified `cf.tunnel.hostname` under `DOMAIN_NAME`. Verify that `cf.tunnel.name`, if set, matches this gateway. Set `cf.tunnel.port` explicitly. A false enable label does not disable current discovery. See [labels](labels.md).
 
----
+Apply changed labels from the application stack's directory with `docker compose up -d <service>`. A plain restart does not apply Compose changes.
 
-### 3. Connection Refused / Wrong Port
+## Hostname does not resolve
 
-- **Symptom:** Sync log outputs `Connection refused` or container logs show no incoming requests.
-- **Check:**
-  Inspect listening ports inside your container:
-  ```bash
-  docker port <container-name>
-  # Check Docker inspection for internal exposed ports
-  docker inspect <container-name> --format '{{json .NetworkSettings.Ports}}'
-  ```
-- **Fix:**
-  Set the explicit two-label configuration:
-  ```yaml
-  labels:
-    - "cf.tunnel.hostname=app.example.com"
-    - "cf.tunnel.port=8080" # Match the port your app listens on
-  ```
+Query public address records from a client with `dig` installed:
 
----
+```bash
+dig @1.1.1.1 app.example.com A
+dig @1.1.1.1 app.example.com AAAA
+```
 
-### 4. Disjoint Docker Networks (502 Prevention)
+`1.1.1.1` is a recursive resolver, not your domain's authoritative nameserver. An empty CNAME answer alone is not evidence of a missing proxied record: [proxied records return Cloudflare addresses](https://developers.cloudflare.com/dns/proxy-status/).
 
-- **Symptom:** Preflight or dashboard displays:
-  `⚠️ [NET] Container networks do not overlap with connector networks. Requests will fail with 502 Bad Gateway!`
-- **Check:**
-  ```bash
-  docker network ls --filter name=cf-tunnel-net
-  ```
-- **Fix:**
-  Ensure the shared network is marked `external: true` in your service's `docker-compose.yml`:
-  ```yaml
-  networks:
-    cf-tunnel-net:
-      external: true
-  ```
-  And declare `networks: [cf-tunnel-net]` under your service definition.
+Check the stored record in Cloudflare DNS: hostname, CNAME target `<tunnel-id>.cfargotunnel.com`, proxy state, and ownership comment. Then check sync logs for DNS creation/collision errors. Do not delete an existing record until you know what uses it.
 
----
+If the record is correct but resolvers disagree, inspect delegation and caches. Avoid assuming every propagation problem resolves within five minutes. A request outside the configured `DOMAIN_NAME` scope is not fixed by giving the token access to another zone.
 
-### 5. Bad, Expired, or Insufficient API Token
+## Tunnel-origin 502
 
-- **Symptom:** Sync daemon logs show `Cloudflare API Error (401): Unauthorized` or `403 Forbidden`.
-- **Check:**
-  Test token validity against Cloudflare Client API:
-  ```bash
-  curl -s -X GET "https://api.cloudflare.com/client/v4/user/tokens/verify" \
-       -H "Authorization: Bearer <YOUR_CLOUDFLARE_API_TOKEN>"
-  ```
-- **Expected Outcome:**
-  ```json
-  {"result":{"id":"...","status":"active"},"success":true,"errors":[],"messages":[]}
-  ```
-- **Fix:**
-  Create a new API Token in the Cloudflare dashboard with:
-  - `Account → Cloudflare Tunnel → Edit`
-  - `Zone → DNS → Edit`
-  - `Zone → Zone → Read`
+A tunnel-origin 502 usually means the connector is connected but cannot reach the origin; 1033 is a different failure. See [Cloudflare's tunnel troubleshooting](https://developers.cloudflare.com/tunnel/troubleshooting/).
 
----
+Check:
 
-### 6. Tunnel Connector (`cloudflared`) Not Running or Token Missing
+1. The origin URL in status: correct `http`/`https`, name, and internal port.
+2. Connector and application membership in `cf-tunnel-net`:
 
-- **Symptom:** Cloudflare Zero Trust dashboard shows tunnel status `INACTIVE` / `DOWN`.
-- **Check:**
-  Check `cloudflared` container status:
-  ```bash
-  docker ps --filter name=cloudflared
-  docker logs cloudflared --tail 30
-  ```
-- **Fix:**
-  In single-compose or gateway setups, verify that the shared volume `cf_token_data` is mounted at `/etc/cloudflared` by both `cf-tunnel-sync` and `cloudflared`. `cf-tunnel-sync` writes the tunnel token to `/etc/cloudflared/token` and triggers a container restart for `cloudflared` upon first bootstrap. Ensure `cloudflared` runs `command: tunnel --no-autoupdate run --token-file /etc/cloudflared/token`.
+   ```bash
+   docker network inspect cf-tunnel-net
+   ```
 
----
+3. Application logs and its actual listening interface. Docker `EXPOSE`/`docker port` metadata does not prove a process is listening. It usually must bind beyond container loopback.
+4. For HTTPS origins, certificate trust and server name. See [TLS labels](labels.md#https-origins).
 
-### 7. Safety Guard / Blast-Radius Deletion Limit Tripped
+The official connector image may not contain a shell, `curl`, or `nc`. If needed, run a disposable client on the same network; this example pulls an image and contacts the application:
 
-- **Symptom:** Sync log outputs:
-  `❌ BLAST RADIUS GUARD: Mass deletion threshold exceeded (planned: 4, limit: 3). Sync aborted.`
-- **Check:**
-  Inspect the ChangePlan details via API or dashboard:
-  ```bash
-  curl -s http://localhost:8080/api/status | grep safety_guard_tripped
-  ```
-- **Fix:**
-  1. If containers stopped unexpectedly due to host reboot or maintenance, restart your service containers. `cf-tunnel-sync` safely preserved your DNS records without deleting them.
-  2. If mass teardown is intentional, set `ALLOW_MASS_DELETIONS=true` in your `.env` and trigger sync:
-     ```bash
-     ALLOW_MASS_DELETIONS=true docker compose up -d
-     ```
+```bash
+docker run --rm --network cf-tunnel-net curlimages/curl:latest --head --max-time 10 http://<application-container>:8080
+```
 
----
+Use an approved/pinned diagnostic image for your environment. A successful response establishes that this client can reach the application on that network; it does not reproduce all connector-specific TLS settings. Persist network changes in Compose rather than relying on a temporary `docker network connect`.
 
-### 8. Dashboard HTTP 401 Unauthorized
+## Error 1033 or connector disconnected
 
-- **Symptom:** Accessing `http://localhost:8080` prompts for credentials and rejects logins or returns 401.
-- **Check:**
-  Verify authentication configuration in `.env`:
-  ```bash
-  grep -E "(DASHBOARD_AUTH|BASIC_AUTH)" .env
-  ```
-- **Fix:**
-  1. `cf-tunnel-sync` **fails closed** if `DASHBOARD_AUTH_ENABLED=true` but `DASHBOARD_PASSWORD` is blank or unconfigured.
-  2. Set non-empty `DASHBOARD_USERNAME` and `DASHBOARD_PASSWORD` in your `.env`:
-     ```env
-     DASHBOARD_AUTH_ENABLED=true
-     DASHBOARD_USERNAME=admin
-     DASHBOARD_PASSWORD=my_secure_password
-     ```
-  3. Restart the container:
-     ```bash
-     docker compose restart cf-tunnel-sync
-     ```
+Inspect `cloudflared` logs first. Verify its command uses `--token-file /etc/cloudflared/token` and both gateway services mount the same token volume. Do not print the token during diagnosis.
 
----
+Check for token-write or connector-restart notices in sync logs. A read-only socket proxy blocks restart POSTs. After confirming the token is initialized, explicitly restart the connector if needed:
 
-### 9. Slow DNS Propagation
+```bash
+docker compose restart cloudflared
+```
 
-- **Symptom:** Record exists in Cloudflare DNS, but local resolver does not resolve it.
-- **Check:**
-  Query Cloudflare authoritative DNS resolver directly:
-  ```bash
-  dig @1.1.1.1 app.example.com CNAME
-  ```
-- **Fix:**
-  `cf-tunnel-sync` creates CNAME records with `proxied: true` and Cloudflare automatic TTL (`1`), ensuring near-instant edge propagation. Local ISP resolvers may cache negative responses (NXDOMAIN) for up to 5 minutes; flush your local DNS cache or query `1.1.1.1` to confirm.
+Also check host/network access to Cloudflare. [Error 1033](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-1xxx-errors/error-1033/) means Cloudflare cannot find a healthy connector for the tunnel; changing the application's port alone will not reconnect it.
+
+## Token or permission error
+
+Run preflight and inspect its token/zone/tunnel diagnostics. A valid token can still lack access to a resource or lack DNS edit permission. Compare its scope with the [permission guide](cloudflare-permissions.md), and confirm `CLOUDFLARE_API_TOKEN` is actually passed into the container.
+
+Update credentials through your normal secret configuration and recreate the sync service. Do not paste a real token into shared command output or support messages.
+
+## Dashboard returns 401
+
+The root Compose deployment enables authentication. Both username and password must be nonempty. Verify their presence privately; do not dump `.env` or resolved Compose configuration into a support report.
+
+After changing the environment file or Compose settings, recreate the service:
+
+```bash
+docker compose up -d cf-tunnel-sync
+```
+
+Use `DASHBOARD_USERNAME` and `DASHBOARD_PASSWORD` for the embedded dashboard. The companion Nginx dashboard uses its own `BASIC_AUTH_*` settings. See [authentication](api.md#authentication). A restart alone does not reload changed container environment values.
+
+## Deletion guard tripped
+
+Inspect both state and the latest plan:
+
+```bash
+curl --fail-with-body --user admin http://localhost:8080/api/status
+curl --fail-with-body --user admin http://localhost:8080/api/change-plan
+```
+
+Restore unexpectedly missing applications before overriding protection. For an intended mass removal, pass `ALLOW_MASS_DELETIONS=true` into the sync container's environment, recreate it, verify the resulting cleanup, then remove the override. The root Compose file does not forward every setting automatically; setting an unused `.env` key alone has no effect.
+
+An immediate-cleanup override affects the entire gateway. See [ownership/deletion configuration](configuration.md#ownership-and-deletion).
+
+## API says synced but the application fails
+
+A successful configuration cycle is not an end-to-end application health probe. Network diagnostics are plausibility checks; status DNS entries can reflect intent after partial errors. Check per-service stages, events, actual Cloudflare configuration, connector logs, and a public request.
+
+An Access metadata label is not authentication. If the route should be private, verify its real application/Access policy. Existing manual ingress rules also have [preservation limitations](architecture-and-safety.md#current-limitations).

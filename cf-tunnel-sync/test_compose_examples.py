@@ -125,7 +125,7 @@ class TestComposeExamplesAndSchemaValidation(unittest.TestCase):
 
         # Check required sections
         self.assertIn("docker-compose.headless.yml", doc)
-        self.assertIn("service-whoami", doc)
+        self.assertIn("traefik/whoami", doc)
         self.assertIn("--preflight", doc)
         self.assertIn("cf-tunnel-net", doc)
         self.assertIn("curl -I", doc)

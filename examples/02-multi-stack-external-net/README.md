@@ -1,127 +1,86 @@
-# 🌐 Example 02: Real-World Multi-Stack with External Network
+# Separate gateway and application stacks
 
-In realistic production and homelab setups, services are decoupled into independent Compose stacks rather than combined into a single monolithic file.
+Use one external network to connect an independent application stack to `cloudflared`. You need Docker Compose v2, a Cloudflare zone, and a [scoped token](../../docs/cloudflare-permissions.md). The `traefik/whoami` web demo returns request details. PostgreSQL demonstrates a separate backend network; whoami itself does not connect to it.
 
-This example shows how to deploy a dedicated **Core Gateway Stack** and connect an **Application Stack** (such as `service-whoami` or custom web apps) via a shared external Docker network (`cf-tunnel-net`).
+Read [networking](../../docs/networking-guide.md) and [current safety limitations](../../docs/architecture-and-safety.md#current-limitations) before connecting existing services.
 
----
+## Configure the two stacks
 
-## 🏗️ Why This Architecture Prevents 502 Bad Gateway Errors
+From this example's directory:
 
-A Cloudflare Tunnel error `HTTP 502 Bad Gateway` almost always means `cloudflared` cannot reach the origin container's IP/port across Docker's bridge networks.
-
-By creating an external bridge network (`cf-tunnel-net`) and attaching both `cloudflared` and your application container to it:
-1. `cloudflared` resolves container hostnames (e.g., `http://my-app-web:80`) using Docker's internal embedded DNS.
-2. Backends (like internal databases) stay safely isolated on their own internal networks without exposure to `cloudflared`.
-
-```mermaid
-flowchart LR
-    subgraph Gateway Stack
-        Sync["cf-tunnel-sync"]
-        CFD["cloudflared"]
-    end
-
-    subgraph App Stack
-        Web["my-app-web (service-whoami)"]
-        DB[("PostgreSQL DB")]
-    end
-
-    Sync -.->|"Shared Volume"| CFD
-    CFD <-->|"cf-tunnel-net"| Web
-    Web <-->|"internal-backend"| DB
+```bash
+cp core-tunnel-stack/.env.example core-tunnel-stack/.env
+cp app-stack-example/.env.example app-stack-example/.env
 ```
 
----
+Edit both files privately. Replace the gateway token/domain and the demo database password. Set the **same** `DOMAIN_NAME` and `CF_NETWORK_NAME` in both directories. The optional gateway account ID is forwarded when configured.
 
-## 📁 Directory Structure
-
-```text
-examples/02-multi-stack-external-net/
-├── README.md                          # Flagship walkthrough (this guide)
-├── core-tunnel-stack/                 # Central tunnel gateway stack
-│   ├── .env.example
-│   ├── docker-compose.yml             # Canonical headless gateway (zero host ports)
-│   ├── docker-compose.headless.yml    # Headless gateway variant
-│   └── docker-compose.with-dashboard.yml # Gateway with optional Web Dashboard
-└── app-stack-example/                 # Sample application stack (web service-whoami + isolated DB)
-    ├── .env.example
-    └── docker-compose.yml
-```
-
----
-
-## 🚀 Step-by-Step Deployment
-
-### Step 1: Create the External Bridge Network (One-Time Setup)
+Create the chosen external network once; substitute your configured name if different:
 
 ```bash
 docker network create cf-tunnel-net
 ```
 
-### Step 2: Validate Prerequisites with Preflight Check
-
-Verify API credentials and Docker network connectivity before deploying:
-
-```bash
-docker run --rm \
-  -e CLOUDFLARE_API_TOKEN="your-token" \
-  -e DOMAIN_NAME="example.com" \
-  hapheus/cf-tunnel-sync:latest --preflight
-```
-
-### Step 3: Start the Core Gateway Stack
-
-Navigate to the `core-tunnel-stack/` directory:
+## Start a gateway variant
 
 ```bash
 cd core-tunnel-stack
-cp .env.example .env
-# Edit .env with your Cloudflare API Token and domain
-docker compose -f docker-compose.yml up -d
+docker compose up -d
+docker compose logs --tail=50 cf-tunnel-sync cloudflared
 ```
 
-> **Headless Mode:** For complete zero-host-port security, use `docker-compose.headless.yml`:
-> ```bash
-> docker compose -f docker-compose.headless.yml up -d
-> ```
+Choose one file:
 
-### Step 4: Start the Application Stack (`service-whoami` Demo)
+| File | Purpose |
+| --- | --- |
+| `docker-compose.yml` | Headless gateway, no published ports. |
+| `docker-compose.headless.yml` | Explicitly named equivalent of the default headless file. |
+| `docker-compose.with-dashboard.yml` | Companion frontend, default host port 8080. |
 
-Navigate to the `app-stack-example/` directory:
+For the explicitly named headless variant:
+
+```bash
+docker compose -f docker-compose.headless.yml up -d
+```
+
+For the dashboard variant, set a strong `BASIC_AUTH_PASSWORD` first:
+
+```bash
+docker compose -f docker-compose.with-dashboard.yml up -d
+```
+
+The supplied environment template binds this frontend to `127.0.0.1`; visit `http://localhost:8080` on the host. The backend API is not published. Frontend authentication does not protect the API from other containers on its network. Only the dashboard variant consumes the dashboard settings.
+
+Use the selected `-f` argument consistently for `exec`, `logs`, and `down`. Run only one variant for this gateway project. The sync healthcheck waits for a nonempty token before starting the connector; inspect its logs for the actual connection.
+
+## Inspect and start the application
+
+For the default file, non-mutating inspection uses:
+
+```bash
+docker compose exec cf-tunnel-sync python app.py --preflight
+```
+
+Preflight reads Docker and Cloudflare. It does not prove write permissions or public reachability; starting the gateway itself can modify remote resources.
+
+Start the application stack:
 
 ```bash
 cd ../app-stack-example
-cp .env.example .env
-# Edit .env with your domain
 docker compose up -d
-```
-
-`cf-tunnel-sync` instantly detects the new container, computes the ChangePlan, registers the ingress route with Cloudflare, and provisions `app.example.com` in Cloudflare DNS.
-
----
-
-## 🔍 Verification
-
-Verify public HTTPS resolution through Cloudflare edge:
-
-```bash
 curl -I https://app.example.com
 ```
 
-Expected response includes `HTTP/2 200` with the `cf-ray` header.
+Replace the domain. The `web` service joins the gateway and backend networks; the database only joins the backend network and has no host port or tunnel label. The demo normally returns HTTP 200 when routing is ready. Exposing a private application requires actual application/Access authentication, not a metadata label.
 
----
+## Stop the stacks
 
-## 🧹 Teardown
-
-To stop the stacks cleanly:
+From `app-stack-example/`:
 
 ```bash
-# Stop application stack
-cd app-stack-example
 docker compose down
-
-# Stop core gateway stack
 cd ../core-tunnel-stack
 docker compose down
 ```
+
+For an alternate gateway file, use its `-f` argument for the final command. Volumes and Cloudflare resources are retained. To let the controller remove an application route, keep the gateway running through the grace period and a later sync before stopping it. See [operations](../../docs/operations.md).
