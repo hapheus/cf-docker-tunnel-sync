@@ -68,8 +68,14 @@ comment: "cf-tunnel-sync:<tunnel_name>"
 | **`FOREIGN_TUNNEL`** | Points to another tunnel or has a different tunnel tag prefix. | **READ-ONLY — NEVER TOUCHED** |
 | **`UNRELATED`** | Type is A, AAAA, MX, TXT, or CNAME to another domain. | **READ-ONLY — NEVER TOUCHED** |
 
+### 3.3 Ingress Rule Ownership & Manual Rule Preservation
+Unlike Cloudflare DNS records, the Cloudflare Tunnel configuration API does not support custom comment metadata on individual ingress rules. To guarantee that pre-existing or manually created ingress rules are never lost:
+* The reconciler cross-references each remote ingress rule with Cloudflare DNS records.
+* Any rule whose hostname is either not managed via an `OWNED` DNS record or lacks a discovered Docker container is treated as an unmanaged external route.
+* These unmanaged rules are preserved as read-only (`NOOP`) and retained in the active Cloudflare Tunnel configuration.
+
 > [!IMPORTANT]
-> Manually configured DNS records (A, AAAA, MX, TXT, or unmanaged CNAMEs) will **never be modified or deleted** by `cf-docker-tunnel-sync`.
+> Manually configured DNS records (A, AAAA, MX, TXT, or unmanaged CNAMEs) and manual Cloudflare Tunnel ingress rules will **never be modified or deleted** by `cf-docker-tunnel-sync`.
 
 ---
 
@@ -85,12 +91,25 @@ When a container stops during an image update (`docker compose up -d`) or host r
 
 ## 5. Fail-Closed Circuit Breakers & Blast-Radius Protection
 
-### 5.1 Empty-Inventory Circuit Breaker
-If the Docker daemon restarts or returns 0 containers due to an engine glitch, `cf-tunnel-sync` recognizes the sudden inventory drop, aborts the cycle, and refuses to delete any Cloudflare records.
+### 5.1 Empty-Inventory & Docker Outage Fail-Closed
+If the Docker daemon restarts, disconnects, or returns 0 containers due to an engine glitch, `cf-tunnel-sync` enters a fail-closed state (`SAFE-02` invariant):
+* Local discovery is marked degraded.
+* All existing ingress rules and DNS records are marked `PROTECT` / `NOOP`.
+* Zero deletions or modifications are executed against Cloudflare.
 
 ### 5.2 Blast-Radius Deletion Threshold
-* `MAX_DELETIONS_PER_SYNC=3`: If any synchronization cycle attempts to delete more than 3 routes/DNS records simultaneously, the blast-radius circuit breaker trips immediately.
+* `MAX_DELETIONS_PER_SYNC=3`: If any synchronization cycle attempts to delete more than 3 routes/DNS records simultaneously, the blast-radius circuit breaker trips immediately (`BlastRadiusExceededError`).
 * Sync is halted, existing Cloudflare routes remain intact, and a protective alert is logged:
   ```text
   [WARNING] Blast-radius protection tripped: 5 planned deletions exceeds threshold 3. Sync aborted. Set ALLOW_MASS_DELETIONS=true to override.
   ```
+* Mass deletion can only occur if explicitly overridden with `ALLOW_MASS_DELETIONS=true`.
+
+---
+
+## 6. Zero-Risk Testing & Adopter Safeguards (Dry-Run & Preflight)
+
+First-time users can safely audit the system without making any changes to their Cloudflare account:
+
+* **Preflight Validation (`PREFLIGHT_ONLY=true` or `--preflight`):** Performs non-mutating validation of Docker socket connectivity, API token permissions, and Cloudflare Zone resolution, then cleanly exits without touching Cloudflare tunnels or DNS.
+* **Deterministic Dry-Run (`DRY_RUN=true` or `--dry-run`):** Generates and prints the complete `ChangePlan` diff (showing every planned `CREATE`, `UPDATE`, `DELETE`, and `PROTECT` action), but sends **zero write requests** to Cloudflare. The planned diff is also queryable at `/api/change-plan`.

@@ -21,6 +21,19 @@ flowchart LR
 
 ---
 
+## 🛡️ Zero-Damage Guarantee for Existing Cloudflare Setups
+
+If you already use Cloudflare for other websites, services, or tunnels, you might worry: *Could `cf-docker-tunnel-sync` overwrite my DNS records, delete other routes, or break my production setup?*
+
+**No.** The synchronizer is designed with strict safeguards:
+- **Your other DNS records are safe:** The daemon **never deletes or modifies** any DNS record (A, AAAA, MX, TXT, or unmanaged CNAMEs) that it did not create. It tags its own CNAME records using Cloudflare record comments (`cf-tunnel-sync:<tunnel_name>`), leaving all your other DNS records untouched.
+- **Your other Tunnels are isolated:** The daemon only operates on the specific tunnel defined by `CLOUDFLARE_TUNNEL_NAME`. All other tunnels in your account are completely ignored.
+- **Existing manual ingress rules are preserved:** If the tunnel already contains manually configured ingress rules, the daemon detects them and preserves them as read-only (`NOOP`).
+- **Circuit breakers prevent accidental deletions:** Deletions are capped at 3 per sync cycle (`MAX_DELETIONS_PER_SYNC=3`). If containers are removed en masse or Docker crashes, sync halts safely without deleting your routes.
+- **Test with zero risk (`DRY_RUN=true`):** You can set `DRY_RUN=true` in `.env` to preview exactly what the tool plans to do before allowing any write requests to Cloudflare.
+
+---
+
 ## Step-by-Step Walkthrough
 
 ### Step 1: Attach Your Service to `cf-tunnel-net`
