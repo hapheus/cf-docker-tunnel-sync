@@ -1,54 +1,6 @@
-# Docker Labels Reference
+# Container labels
 
-`cf-tunnel-sync` inspects container labels to dynamically manage Cloudflare Tunnel ingress rules and Cloudflare DNS CNAME records.
-
-Only containers connected to the shared gateway network (`cf-tunnel-net`) and carrying `cf.tunnel.*` labels are routed.
-
----
-
-## 🏷️ Supported Labels
-
-| Label | Required | Aliases | Default | Description & Example |
-| :--- | :--- | :--- | :--- | :--- |
-| `cf.tunnel.hostname` | **Yes** | `cf.tunnel.domain`, `cf.tunnel.host` | — | The public Fully Qualified Domain Name (FQDN) for the service. Supports multiple comma-separated or space-separated hostnames.<br>`cf.tunnel.hostname=app.example.com`<br>`cf.tunnel.hostname=app.example.com,api.example.com` |
-| `cf.tunnel.port` | Optional\* | `port` | auto-detected | The internal port the container listens on.<br>`cf.tunnel.port=8080`<br>\**Auto-detected if the image exposes exactly one port via `EXPOSE`.* |
-| `cf.tunnel.proto` | Optional | `cf.tunnel.protocol`, `cf.tunnel.scheme` | `http` | Upstream protocol `cloudflared` uses to reach the container: `http`, `https`, `tcp`, `udp`, `ssh`, or `rdp`.<br>`cf.tunnel.proto=http` |
-| `cf.tunnel.name` | Optional | `cf.tunnel.tunnel` | — | Scope container to a specific Cloudflare Tunnel. Ignored by other tunnels in multi-tunnel / multi-gateway environments.<br>`cf.tunnel.name=production-gateway` |
-| `cf.tunnel.service` | Optional | — | auto-constructed | Explicit upstream service URL override (bypasses default `proto://container_name:port` resolution).<br>`cf.tunnel.service=http://custom-origin:8080` |
-| `cf.tunnel.origin_request.no_tls_verify` | Optional | `cf.tunnel.notls_verify`, `cf.tunnel.notlsverify` | `false` | Disable TLS certificate verification between `cloudflared` and the origin container (essential for upstream services with self-signed SSL certs).<br>`cf.tunnel.origin_request.no_tls_verify=true` |
-| `cf.tunnel.origin_request.origin_server_name` | Optional | `cf.tunnel.originServerName` | — | Custom SNI hostname to send in the TLS handshake to origin.<br>`cf.tunnel.origin_request.origin_server_name=app.local` |
-| `cf.tunnel.origin_request.http_host_header` | Optional | `cf.tunnel.httpHostHeader` | — | Custom `Host` header sent to the upstream container origin.<br>`cf.tunnel.origin_request.http_host_header=app.internal` |
-| `cf.tunnel.access_policy` | Optional | `cf.tunnel.access.policy` | — | Tag or identifier for Cloudflare Access integration policies.<br>`cf.tunnel.access_policy=internal-team` |
-
----
-
-## 🎯 Port-Discovery Precedence & Two-Label Recommendation (DX-07)
-
-`cf-tunnel-sync` resolves the upstream port using a deterministic precedence hierarchy:
-
-```
-1. Explicit Label:  cf.tunnel.port (or alias `port`)          --> HIGHEST PRECEDENCE
-2. Image Metadata:  Single EXPOSE port in Dockerfile        --> Used if exactly 1 port exposed
-3. Fallback:        Port 80 (with diagnostic warning logged) --> Used if 0 or >1 ports exposed
-```
-
-### ⚠️ Ambiguity with Multiple EXPOSE Ports
-When an upstream image exposes multiple ports (e.g., `EXPOSE 80 443` or `EXPOSE 8080 9090`), automatic port discovery cannot guess which port serves HTTP traffic. Without an explicit label, `cf-tunnel-sync` falls back to port `80` and logs a preflight diagnostic warning.
-
-### 🌟 The Golden Standard: The Explicit Two-Label Rule
-To ensure 100% deterministic routing across image updates and multi-port containers, **always declare both labels**:
-
-```yaml
-labels:
-  - "cf.tunnel.hostname=app.example.com"
-  - "cf.tunnel.port=8080"
-```
-
----
-
-## 💡 Practical Examples
-
-### 1. Minimal Web Application (HTTP)
+The synchronizer reads running containers and selects a normalized hostname within `DOMAIN_NAME`. Use one fully qualified hostname per container and set its internal port explicitly.
 
 ```yaml
 services:
@@ -57,46 +9,80 @@ services:
     networks:
       - cf-tunnel-net
     labels:
-      - "cf.tunnel.hostname=web.example.com"
-      - "cf.tunnel.port=80"
+      cf.tunnel.hostname: web.example.com
+      cf.tunnel.port: "80"
 
 networks:
   cf-tunnel-net:
     external: true
 ```
 
-### 2. Upstream HTTPS with Self-Signed Certificate
+Run this application stack after creating the gateway network. Host port publication is not needed for tunnel traffic.
+
+## Routing labels
+
+| Label | Default | Effect |
+| --- | --- | --- |
+| `cf.tunnel.hostname` | Required for selection | One hostname, such as `web.example.com`. The hostname must belong to the configured zone. |
+| `cf.tunnel.port` | Docker metadata, then protocol default | Container's internal listening port, from `1` to `65535`. |
+| `cf.tunnel.protocol` | `http` | Origin scheme. Also reads `cf.tunnel.proto` and `cf.tunnel.scheme`, in that order. Parsed schemes include `http`, `https`, `tcp`, `udp`, `ssh`, and `rdp`; parser acceptance does not establish end-to-end support for each Cloudflare protocol. |
+| `cf.tunnel.service` | Constructed origin URL | Explicit origin URL; overrides port/name construction. |
+| `cf.tunnel.name` | Unscoped | Selects this container only when the value matches `CLOUDFLARE_TUNNEL_NAME`; also reads `cf.tunnel.tunnel`. |
+| `cf.tunnel.access.policy` | `unspecified` | Lowercased metadata shown in status. Also reads `cf.tunnel.access_policy`. **Does not create or enforce Cloudflare Access policies.** |
+
+Containers without a tunnel-name restriction are eligible for every instance managing their domain. Set `cf.tunnel.name` when using multiple gateways.
+
+### Hostname and selection details
+
+The parser lowercases hostnames, removes trailing dots and URL components, and validates DNS labels. Prefer a plain fully qualified hostname. It does not expand a short name such as `web` into `web.example.com`, or split comma-/space-separated names into multiple routes. When multiple containers request the same hostname, the first discovered one wins.
+
+`cf.tunnel.enable` is not checked by current discovery. Its absence does not disable discovery, and setting it to `false` does not opt out. Remove the hostname labels or use tunnel scoping to stop matching this synchronizer.
+
+`cf.tunnel.path` is not consumed by the normal discovery/planning pipeline. Do not use it to configure path-based routes. Existing manual path rules also have preservation limitations; see [architecture and safety](architecture-and-safety.md#current-limitations).
+
+### Port selection
+
+The current discovery order is:
+
+1. A valid explicit port label, unless an explicit service URL overrides construction.
+2. The first valid `PrivatePort` entry in the Docker container-list response.
+3. `443` for an HTTPS origin, or `80` for other schemes.
+
+This is not a single-EXPOSE-only algorithm. Invalid port labels can fall back to metadata/defaults. Set the correct port explicitly for predictable routing; image metadata does not prove that the application is listening there.
+
+## HTTPS origins
+
+Use HTTPS as the origin protocol when the application itself serves TLS:
 
 ```yaml
-services:
-  vault:
-    image: vaultwarden/server:latest
-    networks:
-      - cf-tunnel-net
-    labels:
-      - "cf.tunnel.hostname=vault.example.com"
-      - "cf.tunnel.port=8443"
-      - "cf.tunnel.proto=https"
-      - "cf.tunnel.origin_request.no_tls_verify=true"
-
-networks:
-  cf-tunnel-net:
-    external: true
+labels:
+  cf.tunnel.hostname: vault.example.com
+  cf.tunnel.port: "8443"
+  cf.tunnel.protocol: https
+  cf.tunnel.originRequest.noTLSVerify: "true"
 ```
 
-### 3. Multi-Domain Routing to One Service
+Disabling verification accepts an unverified origin certificate. Prefer a valid certificate where practical.
 
-```yaml
-services:
-  api:
-    image: my-api:latest
-    networks:
-      - cf-tunnel-net
-    labels:
-      - "cf.tunnel.hostname=api.example.com,core.example.com"
-      - "cf.tunnel.port=3000"
+| Label to use | Effect |
+| --- | --- |
+| `cf.tunnel.originRequest.noTLSVerify` | Disables origin certificate verification for `true`, `1`, or `yes`; accepts `false`, `0`, and `no`. Also reads `cf.tunnel.notlsverify`, `cf.tunnel.notls_verify`, and `cf.tunnel.origin_request.no_tls_verify`. |
+| `cf.tunnel.originServerName` | Sets origin TLS server name; also reads `cf.tunnel.origin.server.name` and `cf.tunnel.origin_server_name`. |
+| `cf.tunnel.httpHostHeader` | Overrides the HTTP Host header; also reads `cf.tunnel.http.host.header` and `cf.tunnel.http_host_header`. |
 
-networks:
-  cf-tunnel-net:
-    external: true
-```
+The current normal parser does not read `cf.tunnel.originRequest.originServerName` or `cf.tunnel.originRequest.httpHostHeader`, despite their appearance in older references. Use the spellings in the table.
+
+## Legacy labels and precedence
+
+For new deployments, use the labels above. Current discovery also reads:
+
+- Hostname: `cf.tunnel.domain`, `cf.tunnel.host`, `cloudflared.hostname`, `cloudflared.domain`, `cloudflared.host`, `hostname`, `host`, after `cf.tunnel.hostname`, in that order.
+- Port: `cloudflared.port`, then `port`, after `cf.tunnel.port`.
+- Protocol: the `cloudflared.protocol`, `cloudflared.proto`, `cloudflared.scheme` variants, then `proto`, `protocol`, `scheme`, after the three modern variants.
+- Service: `cloudflared.service`, after `cf.tunnel.service`.
+- Tunnel name: `cloudflared.name`, then `cloudflared.tunnel`, after the modern variants.
+- Access metadata: `cloudflared.access.policy`, after the modern variants.
+
+TLS handling prefers modern no-verification labels, modern verification labels (`cf.tunnel.tls.verify` / `cf.tunnel.tls_verify`), legacy equivalents, then shorthand `notlsverify`, `no_tls_verify`, and `tls_verify`. Avoid conflicting aliases.
+
+The separate configuration alias registry lists additional names, including `tunnel.*` and `cftunnel.*`. Normal discovery does not resolve that registry, so do not rely on those names to route a service. Existing aliases are not being removed by this documentation update; the distinction is between registered names and actual parser behavior.

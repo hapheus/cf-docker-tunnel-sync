@@ -4,13 +4,13 @@ services:
     restart: unless-stopped
     command: tunnel --no-autoupdate run --token-file /etc/cloudflared/token
     volumes:
-      - cf_token_data:/etc/cloudflared
+      - cf_token_data:/etc/cloudflared:ro
     networks:
       - cf-tunnel-net
     depends_on:
       cf-tunnel-sync:
         condition: service_healthy
-
+    container_name: cloudflared
   cf-tunnel-sync:
     image: hapheus/cf-tunnel-sync:latest
     restart: unless-stopped
@@ -20,45 +20,48 @@ services:
       - CLOUDFLARE_TUNNEL_NAME=${CLOUDFLARE_TUNNEL_NAME:-homelab-gateway}
       - CF_NETWORK_NAME=${CF_NETWORK_NAME:-cf-tunnel-net}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-}
+      - CLOUDFLARED_CONTAINER_NAME=cloudflared
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - cf_token_data:/etc/cloudflared
     expose:
-      - "8090"
+      - '8090'
     networks:
       - cf-tunnel-net
     healthcheck:
-      test: ["CMD", "python", "healthcheck.py"]
+      test:
+        - CMD-SHELL
+        - test -s /etc/cloudflared/token && python healthcheck.py
       interval: 10s
       timeout: 5s
       retries: 3
       start_period: 2s
-
   cf-tunnel-dashboard:
     image: hapheus/cf-tunnel-dashboard:latest
     restart: unless-stopped
     environment:
       - DASHBOARD_AUTH_ENABLED=${DASHBOARD_AUTH_ENABLED:-true}
       - BASIC_AUTH_USERNAME=${BASIC_AUTH_USERNAME:-admin}
-      - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD}
+      - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:?Set BASIC_AUTH_PASSWORD in .env}
     ports:
-      - "${DASHBOARD_PORT:-8080}:80"
+      - ${DASHBOARD_BIND_ADDRESS:-0.0.0.0}:${DASHBOARD_PORT:-8080}:80
     networks:
       - cf-tunnel-net
     depends_on:
       cf-tunnel-sync:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1/health || exit 1"]
+      test:
+        - CMD-SHELL
+        - wget --no-verbose --tries=1 --spider http://127.0.0.1/health || exit 1
       interval: 10s
       timeout: 5s
       retries: 3
       start_period: 2s
-
 networks:
   cf-tunnel-net:
     name: ${CF_NETWORK_NAME:-cf-tunnel-net}
     external: true
-
 volumes:
-  cf_token_data:
+  cf_token_data: {}

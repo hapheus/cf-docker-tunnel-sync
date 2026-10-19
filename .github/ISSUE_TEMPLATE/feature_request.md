@@ -14,7 +14,7 @@ Is your feature request related to a specific operational friction? Please descr
 Describe what behavior you would like to see implemented.
 
 ## 🎯 Value & Alignment with Product Boundaries
-Please review [docs/product-boundaries.md](docs/product-boundaries.md):
+Please review the [product scope](https://github.com/hapheus/cf-docker-tunnel-sync/blob/main/docs/product-boundaries.md):
 - Does this proposal keep `cf-docker-tunnel-sync` focused on Docker + Cloudflare Tunnels?
 - How does this reduce setup/management friction?
 

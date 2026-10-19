@@ -1,115 +1,72 @@
-# Architecture, Safety & DNS Ownership Deep-Dive
+# Architecture and safety
 
-This document details the internal design, reconciliation state machine, DNS ownership mechanics, and fail-safe circuit breakers of `cf-docker-tunnel-sync`.
-
----
-
-## 1. The Controller Pattern (Zero-Local-State)
-
-`cf-docker-tunnel-sync` is modeled after Kubernetes controllers:
-* **Stateless Operation:** There is no local database (no SQLite, no state JSON) that could become desynchronized or corrupt.
-* **Single Source of Truth:**
-  - Desired State is read live from Docker container labels (`/containers/json`).
-  - Remote State is read live from Cloudflare (`/accounts/.../cfd_tunnel/.../configurations` and `/zones/.../dns_records`).
-* **Self-Healing Reconciliation Loop:**
-  - Evaluates every 30 seconds (fallback polling) or instantaneously upon Docker lifecycle events with a 2.5-second debounce window.
-  - Automatically recovers from transient Cloudflare API outages or network disruptions during the very next cycle without requiring container restarts.
+The synchronizer is a configuration controller. Docker labels describe desired services; Cloudflare stores the remote tunnel configuration and DNS. The separate `cloudflared` connector carries application traffic.
 
 ```mermaid
-flowchart TD
-    A["Docker API (/containers/json)"] -->|"1. Harvest Local State"| B["DiscoverySnapshot"]
-    C["Cloudflare API (/cfd_tunnel, /dns_records)"] -->|"2. Harvest Remote State"| D["RemoteState"]
-    B --> E["Pure Reconciler (reconcile.py)"]
-    D --> E
-    E -->|"3. Compute Diff"| F["ChangePlan"]
-    F -->|"4. Safe? Check Blast Radius & Circuit Breakers"| G{"Safe?"}
-    G -- "Yes" --> H["Execute API Mutations (Only if Diff Exists)"]
-    G -- "No (Blast Radius Exceeded)" --> I["Abort Sync & Preserve Remote Infrastructure"]
+flowchart LR
+    Docker[Docker inventory and events] --> Sync[Synchronizer]
+    Sync --> API[Cloudflare configuration and DNS]
+    Sync --> Token[Shared token file]
+    Token --> Connector[cloudflared]
+    Edge[Cloudflare edge] --> Connector
+    Connector --> App[Application on shared network]
 ```
 
----
+## A synchronization cycle
 
-## 2. Sync Run Lifecycle (Step-by-Step)
+1. Resolve the Cloudflare zone and account, then find or create the named tunnel.
+2. Retrieve the connector token, update `/etc/cloudflared/token` if needed, and attempt a connector restart.
+3. Discover running services from Docker labels and evaluate their network configuration.
+4. Read tunnel ingress and relevant CNAME records from Cloudflare.
+5. Compute the desired ingress/DNS changes and grace-period transitions.
+6. Apply deletion limits and execute ingress/DNS changes, unless dry-run is active.
+7. Update status, diagnostics, metrics, history, and alerts.
 
-Each reconcile cycle executes through 6 deterministic phases:
+Docker events trigger synchronization after a default 2.5-second debounce window, capped at 10 seconds. The fallback interval is 900 seconds. An initial cycle runs at startup. Concurrent sync requests are skipped while a cycle is in progress.
 
-1. **Docker Engine Harvest:** Queries Docker via the local Unix socket or TCP socket proxy (`DOCKER_HOST`).
-2. **Container Label Filtering:** Identifies containers with `cf.tunnel.enable=true` (or legacy alias `cloudflared.enable=true`).
-3. **Fail-Safe Label Validation:** Invalid or malformed labels on one container are flagged as degraded and isolated; they **never crash the daemon** or affect other containers.
-4. **ChangePlan Computation & Diff-Check:**
-   - Compares the desired ingress rules against the existing Cloudflare Tunnel configuration.
-   - Compares the desired DNS CNAMEs against existing Cloudflare DNS records.
-   - If no changes are needed, **zero Cloudflare API mutation calls are made**, completely avoiding API rate limits.
-5. **DNS Ownership Verification & Mutations:**
-   - Evaluates record ownership before any deletion or update.
-   - Only mutates or creates records when required.
-6. **Mandatory Catch-All Ingress Rule:**
-   - Ensures the terminal Cloudflare Ingress rule (`service: http_status:404`) is always placed at the end of the rule list.
+The service has no local database. Tombstones, history, and caches are in memory and reset on restart; the token file persists in the shared volume. Remote configuration survives stopping the synchronizer. See [operations](operations.md) for recovery and removal.
 
----
+## DNS ownership
 
-## 3. DNS Ownership & Safe Cleanup Model
+New CNAME records target `<tunnel-id>.cfargotunnel.com` and carry the comment:
 
-A primary fear of DevOps engineers adopting DNS-sync tools is accidental deletion of existing DNS entries. `cf-docker-tunnel-sync` eliminates this risk via explicit **Ownership Tagging**:
-
-### 3.1 Cloudflare Record Tagging
-Every DNS record created or managed by `cf-tunnel-sync` is stamped with an immutable metadata tag in Cloudflare's `comment` attribute:
 ```text
-comment: "cf-tunnel-sync:<tunnel_name>"
+cf-tunnel-sync:<tunnel-name>
 ```
 
-### 3.2 Strict Ownership Classifications
+The ownership classifier compares the record type, target, comment, and whether an active local service requests the hostname.
 
-| Classification | Condition | Permitted Operations |
-| :--- | :--- | :--- |
-| **`OWNED`** | Matches tunnel target AND has `cf-tunnel-sync:<tunnel_name>` tag. | **Create, Update, Safe Delete** |
-| **`ADOPTED`** | Matches tunnel target but has no tag; currently active container requests it. | **Adopt with Tag** (`adopt_and_manage` policy) |
-| **`UNMANAGED`** | Matches tunnel target but has no tag; no active container requests it. | **READ-ONLY — NEVER DELETED** |
-| **`FOREIGN_TUNNEL`** | Points to another tunnel or has a different tunnel tag prefix. | **READ-ONLY — NEVER TOUCHED** |
-| **`UNRELATED`** | Type is A, AAAA, MX, TXT, or CNAME to another domain. | **READ-ONLY — NEVER TOUCHED** |
+| Classification | Meaning | Normal treatment |
+| --- | --- | --- |
+| Owned | CNAME target and ownership comment match | Manage and clean up after the grace period. |
+| Adopted | CNAME points to this tunnel, has no ownership tag, and is requested locally | Default policy adds the tag; `strict_tagged_only` protects it from adoption. |
+| Unmanaged | Untagged CNAME points to this tunnel but is not requested locally | Preserve under the default policy. |
+| Foreign tunnel | Matching target has a different synchronizer ownership tag | Protect. |
+| Unrelated | Type or target does not match | Protect. |
 
-### 3.3 Ingress Rule Ownership & Manual Rule Preservation
-Unlike Cloudflare DNS records, the Cloudflare Tunnel configuration API does not support custom comment metadata on individual ingress rules. To guarantee that pre-existing or manually created ingress rules are never lost:
-* The reconciler cross-references each remote ingress rule with Cloudflare DNS records.
-* Any rule whose hostname is either not managed via an `OWNED` DNS record or lacks a discovered Docker container is treated as an unmanaged external route.
-* These unmanaged rules are preserved as read-only (`NOOP`) and retained in the active Cloudflare Tunnel configuration.
+`legacy_unrestricted` relaxes cleanup rules for old deployments. Prefer the default policy or `strict_tagged_only`; see [configuration](configuration.md).
 
-> [!IMPORTANT]
-> Manually configured DNS records (A, AAAA, MX, TXT, or unmanaged CNAMEs) and manual Cloudflare Tunnel ingress rules will **never be modified or deleted** by `cf-docker-tunnel-sync`.
+## Grace periods and deletion limits
 
----
+When a managed service disappears, its hostname enters a tombstone grace period (300 seconds by default). Ingress and DNS remain during that period. If the service returns, the tombstone is cleared. If it stays absent, a later sync can remove its managed route and DNS record.
 
-## 4. Container Restart Flapping Protection (Tombstoning)
+After a sudden drop from at least two discovered services to zero, the current cycle disables immediate cleanup and uses at least a 300-second grace period. This is different from a complete ban on cleanup for every successful empty Docker response.
 
-When a container stops during an image update (`docker compose up -d`) or host reboot:
-1. `cf-tunnel-sync` detects that the container is temporarily offline.
-2. Rather than immediately deleting the Cloudflare Ingress rule and DNS record, it enters a **tombstone grace period** (`DNS_CLEANUP_GRACE_PERIOD=300`, 5 minutes default).
-3. If the container restarts within 5 minutes, the tombstone is cleared with **zero Cloudflare API writes**, preventing DNS cache flapping and `NXDOMAIN` browser caching.
-4. Only if the container remains absent after 5 minutes is the DNS record safely deleted.
+`MAX_DELETIONS_PER_SYNC` defaults to three. The execution guard counts the larger of ingress and DNS deletion counts rather than adding them. An optional ratio guard is available. Exceeding a limit aborts execution; `ALLOW_MASS_DELETIONS=true` overrides execution limits. See the [configuration reference](configuration.md) for precedence and defaults.
 
----
+## Docker failures
 
-## 5. Fail-Closed Circuit Breakers & Blast-Radius Protection
+Discovery errors mark Docker as degraded and stop the normal ingress/DNS pipeline. The planner also preserves remote resources when its discovery snapshot is degraded. However, tunnel initialization happens before discovery, and a successful empty inventory is not automatically treated as an outage. Do not interpret this behavior as a guarantee of zero writes for every Docker failure scenario.
 
-### 5.1 Empty-Inventory & Docker Outage Fail-Closed
-If the Docker daemon restarts, disconnects, or returns 0 containers due to an engine glitch, `cf-tunnel-sync` enters a fail-closed state (`SAFE-02` invariant):
-* Local discovery is marked degraded.
-* All existing ingress rules and DNS records are marked `PROTECT` / `NOOP`.
-* Zero deletions or modifications are executed against Cloudflare.
+## Current limitations
 
-### 5.2 Blast-Radius Deletion Threshold
-* `MAX_DELETIONS_PER_SYNC=3`: If any synchronization cycle attempts to delete more than 3 routes/DNS records simultaneously, the blast-radius circuit breaker trips immediately (`BlastRadiusExceededError`).
-* Sync is halted, existing Cloudflare routes remain intact, and a protective alert is logged:
-  ```text
-  [WARNING] Blast-radius protection tripped: 5 planned deletions exceeds threshold 3. Sync aborted. Set ALLOW_MASS_DELETIONS=true to override.
-  ```
-* Mass deletion can only occur if explicitly overridden with `ALLOW_MASS_DELETIONS=true`.
+Use a dedicated tunnel and inspect existing configuration before enabling synchronization. The current implementation has these relevant limits:
 
----
+- **Dry-run starts after initialization.** `DRY_RUN=true` skips planned ingress/DNS writes, but a missing tunnel may still be created, the token file written, and the connector restarted. The CLI flag has the same boundary. Use `--preflight` for non-mutating inspection; it still reads configured services.
+- **Missing ownership fields are not fully protected.** A CNAME response without the `comment` key is treated as owned when its target matches. This differs from an explicit empty/null comment and can make an untagged record eligible for cleanup. `strict_tagged_only` does not correct this classifier behavior.
+- **Manual ingress rules are not preserved losslessly.** Rules are indexed by hostname and the output is sorted by hostname. Multiple paths on one hostname can collapse into one rule, rule order can change, and special catch-all rules can be replaced by the final `http_status:404`. A rule sharing an active hostname may also be replaced. Do not attach a tunnel with complex manual routing without reviewing this limitation.
+- **Updates are not transactional.** Ingress failure does not prevent all DNS execution. A partial failure is reported as degraded and retried in later cycles; there is no atomic rollback.
+- **An in-memory ingress cache influences writes.** A fresh process can write configuration even when the planner reports no ingress change; later remote-only ingress drift may be missed if the cached desired configuration stays the same. Do not assume every unchanged cycle produces zero writes or that all drift is corrected immediately.
+- **Access labels are metadata.** They do not create an Access application, identity checks, or an authentication policy.
 
-## 6. Zero-Risk Testing & Adopter Safeguards (Dry-Run & Preflight)
-
-First-time users can safely audit the system without making any changes to their Cloudflare account:
-
-* **Preflight Validation (`PREFLIGHT_ONLY=true` or `--preflight`):** Performs non-mutating validation of Docker socket connectivity, API token permissions, and Cloudflare Zone resolution, then cleanly exits without touching Cloudflare tunnels or DNS.
-* **Deterministic Dry-Run (`DRY_RUN=true` or `--dry-run`):** Generates and prints the complete `ChangePlan` diff (showing every planned `CREATE`, `UPDATE`, `DELETE`, and `PROTECT` action), but sends **zero write requests** to Cloudflare. The planned diff is also queryable at `/api/change-plan`.
+These are current behavior descriptions, not promises about future fixes. See [security](security.md) for exposure boundaries and [troubleshooting](troubleshooting.md) for checks.

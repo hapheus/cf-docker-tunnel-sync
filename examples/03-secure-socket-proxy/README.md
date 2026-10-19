@@ -1,38 +1,52 @@
-# 🛡️ Example 03: Secure Docker Socket Proxy Setup
+# Docker socket proxy
 
-This example demonstrates how to harden `cf-docker-tunnel-sync` using a dedicated, read-only Docker socket proxy (`tecnativa/docker-socket-proxy`), eliminating any direct volume mount of `/var/run/docker.sock` into the sync container.
+This example filters Docker API access with [Tecnativa's socket proxy](https://github.com/Tecnativa/docker-socket-proxy). The sync container has no direct socket mount. You still need Docker Compose v2, a Cloudflare zone, and a [scoped token](../../docs/cloudflare-permissions.md).
 
----
+An unfiltered `/var/run/docker.sock:ro` mount permits Docker API mutation requests: the mount flag does not restrict HTTP methods. Here the proxy explicitly permits container/event reads, `/version`, and ping; `POST=0` restricts requests to GET/HEAD. Its TCP port is only accessible on the private proxy network, not published on the host.
 
-## Why Mount `:ro` on `/var/run/docker.sock` is Not Truly Read-Only
+## Configure and start
 
-A common misconception in Docker deployments is that mounting the Unix socket with `:ro` (`/var/run/docker.sock:/var/run/docker.sock:ro`) provides read-only security.
+From this directory:
 
-In Unix domain sockets, `:ro` only prevents **re-binding or replacing the filesystem socket node**. It **does not prevent sending HTTP POST/DELETE mutation requests** through the open socket stream. Anyone with access to the socket stream can still execute Docker commands (`docker run`, `docker exec`, container creation, host filesystem mounts).
+```bash
+cp .env.example .env
+```
 
----
+Replace token/domain and select a dedicated tunnel. The optional account ID is forwarded. The network setting is applied to both discovery and the actual gateway network.
 
-## The Solution: HTTP REST API Filtering
+```bash
+docker compose up -d
+docker compose ps
+docker compose logs --tail=50 cf-tunnel-sync cloudflared docker-socket-proxy
+```
 
-By placing a socket proxy between Docker and `cf-tunnel-sync`:
-1. Only `GET /containers/json` (`CONTAINERS=1`) and `GET /events` (`EVENTS=1`) are permitted.
-2. All mutation endpoints (`POST=0`, `DELETE=0`, `EXEC=0`, `NETWORKS=0`, `SWARM=0`) are permanently rejected with HTTP 403 Forbidden.
-3. `cf-tunnel-sync` communicates over an internal, non-routable Docker network via `DOCKER_HOST=tcp://docker-socket-proxy:2375`.
+The sync healthcheck requires a nonempty shared token before the connector starts. The proxy intentionally blocks automatic connector-restart POSTs; an initial restart notice can appear while the token is being initialized.
 
----
+## Verify
 
-## How to Run
+Replace the domain:
 
-1. Copy the environment file:
-   ```bash
-   cp .env.example .env
-   ```
-2. Edit `.env` with your credentials:
-   ```env
-   CLOUDFLARE_API_TOKEN=your_token_here
-   DOMAIN_NAME=example.com
-   ```
-3. Start the secured stack:
-   ```bash
-   docker compose up -d
-   ```
+```bash
+curl -I https://secured.example.com
+docker compose exec cf-tunnel-sync python app.py --preflight
+```
+
+The public demo normally returns HTTP 200. `secured` is an example hostname, not a claim of application authentication. Preflight's `/version` request is explicitly permitted by this proxy configuration, but passing it still does not prove public reachability or write permissions.
+
+## After a token change
+
+The synchronizer writes the shared token but cannot restart the connector through this proxy. After verifying initialization in logs, restart it manually when necessary:
+
+```bash
+docker compose restart cloudflared
+```
+
+Do not enable broad mutation access solely to hide this notice. A proxy also exposes the metadata covered by its allowed API sections; it is not an authorization boundary between application users.
+
+## Stop
+
+```bash
+docker compose down
+```
+
+This retains remote Cloudflare resources and named volumes. See [security](../../docs/security.md) and [operations](../../docs/operations.md) for credential handling and full cleanup.

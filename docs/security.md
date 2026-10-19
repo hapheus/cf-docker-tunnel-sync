@@ -1,105 +1,45 @@
-# Security Architecture & Hardening Guide
+# Security
 
-This document outlines the security invariants, threat boundaries, and recommended hardening procedures for `cf-docker-tunnel-sync`.
+The synchronizer handles a Cloudflare API token, a connector token, and Docker host metadata. Keep the controller and its status API on a trusted network. Application authentication must be configured separately.
 
----
+## Docker socket access
 
-## 1. Docker Socket Privileges & Threat Model (SEC-01)
+Mounting `/var/run/docker.sock:ro` does not make the Docker API read-only. The mount restricts filesystem access to the socket node; HTTP requests over that socket can still control Docker. Treat an unfiltered Docker socket as privileged host access.
 
-### 1.1 The `/var/run/docker.sock:ro` Bind Mount
-By default, Docker Compose configurations mount the Docker Unix socket into the `cf-tunnel-sync` container:
-```yaml
-volumes:
-  - /var/run/docker.sock:/var/run/docker.sock:ro
-```
-**Important Security Context:**
-- The `:ro` (read-only) mount flag prevents container processes from modifying, deleting, or recreating the socket inode on the host filesystem.
-- However, the `:ro` flag does **not** restrict HTTP REST API operations sent *across* the socket connection. An attacker with arbitrary code execution inside a container with Docker socket access can issue read requests (`GET /containers/json`, `GET /events`), which allows inspecting container environment variables and configurations across the entire Docker host.
+Normal discovery reads `/containers/json` and `/events`. When the connector token changes, the synchronizer also attempts `POST /containers/<connector>/restart`.
 
-### 1.2 Mitigation: Read-Only Socket Proxy
-For production environments, shared infrastructure, or hardened homelabs, use an isolated Docker socket proxy (such as [`tecnativa/docker-socket-proxy`](https://github.com/Tecnativa/docker-socket-proxy)) to enforce least-privilege API access.
+A socket proxy can restrict API access:
 
-`cf-tunnel-sync` only requires two endpoints:
-- `GET /containers/json` (container discovery)
-- `GET /events` (event-driven sync)
-
-#### Hardened Socket Proxy Architecture:
-```
-[cf-tunnel-sync] ---> TCP:2375 ---> [docker-socket-proxy] ---> /var/run/docker.sock ---> [Docker Engine]
-                                      • CONTAINERS=1 (read-only)
-                                      • EVENTS=1 (read-only)
-                                      • POST=0 (blocked)
-                                      • BUILD=0, EXEC=0 (blocked)
+```text
+synchronizer -> private proxy network -> socket proxy -> Docker socket
 ```
 
-#### Example Configuration:
-A fully configured, working example is provided in [examples/03-secure-socket-proxy/docker-compose.yml](../examples/03-secure-socket-proxy/docker-compose.yml):
-```yaml
-services:
-  docker-socket-proxy:
-    image: tecnativa/docker-socket-proxy:latest
-    container_name: docker-socket-proxy
-    restart: unless-stopped
-    environment:
-      - CONTAINERS=1
-      - EVENTS=1
-      - POST=0
-      - NETWORKS=0
-      - VOLUMES=0
-      - SERVICES=0
-      - SWARM=0
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    networks:
-      - socket-proxy-net
+The [socket-proxy example](../examples/03-secure-socket-proxy/README.md) permits container/event reads and blocks POST requests. This reduces authority but prevents automatic connector restart. After token initialization or replacement, check connector logs and restart the connector yourself if needed. Keep the proxy's TCP port private; the current client uses plain HTTP, without Docker TLS configuration.
 
-  cf-tunnel-sync:
-    image: hapheus/cf-tunnel-sync:latest
-    container_name: cf-tunnel-sync
-    restart: unless-stopped
-    environment:
-      - DOCKER_HOST=tcp://docker-socket-proxy:2375
-      - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}
-      - DOMAIN_NAME=${DOMAIN_NAME}
-    networks:
-      - cf-tunnel-net
-      - socket-proxy-net
-```
+## Cloudflare credentials
 
----
+Use a scoped API token limited to the intended account and zone. The service needs tunnel editing, DNS editing, and zone lookup permissions; see [token setup](cloudflare-permissions.md). Avoid the Global API Key.
 
-## 2. Credential Redaction & Log Sanitization (SEC-02)
+The connector token is written to `/etc/cloudflared/token` on a shared volume. Limit access to that volume and to `.env` files. Stopping the service does not revoke either credential.
 
-`cf-tunnel-sync` incorporates automated regex-based redaction across all operational boundaries:
-1. **Log Streams & Status APIs:**
-   - Authorization headers (`Bearer [REDACTED]`)
-   - Cloudflare API tokens and tunnel secrets (`[REDACTED_JWT_TOKEN]`)
-   - Webhook URLs (Discord, Slack, and generic webhooks) have tokens and paths masked (`https://discord.com/api/webhooks/[REDACTED]`, `https://hooks.slack.com/services/[REDACTED]`)
-2. **Dashboard Status API (`/api/status`):**
-   - Private internal state keys (prefixed with `_`) are filtered out before serialization.
-   - Sensitive credential keys (`token`, `secret`, `password`, `key`) are automatically redacted to `[REDACTED]`.
-3. **Notification Payloads:**
-   - Webhook titles, messages, and structured details dictionaries are sanitized prior to dispatch.
+The service masks recognized secrets in logs, API output, and webhook payloads. Redaction is a safeguard, not a reason to include raw credentials in arbitrary messages or support reports. Check outputs before sharing them.
 
----
+## Dashboard and metrics
 
-## 3. Strict Resource Ownership Invariants (SAFE-01)
+The backend listens on `0.0.0.0:8090`; the root Compose file publishes host port 8080. With that Compose file, set `DASHBOARD_BIND_ADDRESS=127.0.0.1` to restrict the published port to the local host, or use the [headless example](../examples/02-multi-stack-external-net/core-tunnel-stack/docker-compose.headless.yml) without published ports.
 
-To prevent route hijacking, domain collisions, or accidental deletion of foreign records:
-- **Stateless Ownership Tagging:** Every DNS record created or managed by `cf-tunnel-sync` carries a metadata comment in Cloudflare DNS: `cf-tunnel-sync:<tunnel_name>`.
-- **Pre-Existing Record Protection:** CNAME, A, or TXT records created manually or by other tools that lack this tunnel's comment tag are classified as `UNMANAGED`, `FOREIGN_TUNNEL`, or `UNRELATED`. They are **never** modified or deleted by `cf-tunnel-sync`.
-- **Destructive Operation Preconditions:** A Cloudflare DNS record is eligible for automated deletion **only** if:
-  1. Its type is `CNAME`.
-  2. Its content matches `tunnel_id.cfargotunnel.com`.
-  3. Its comment matches `cf-tunnel-sync:<tunnel_name>` (exact match).
+Configure a nonempty dashboard username and password. The root Compose file enables authentication by default and rejects protected requests if credentials are missing. Bare-image behavior and metric authentication differ; see [configuration](configuration.md).
 
----
+Basic authentication does not encrypt traffic. Use a trusted local connection or TLS in front of an exposed dashboard. `/health`, `/healthz`, and `/ready` are public probes; `/metrics` is public unless `METRICS_AUTH_ENABLED=true`. Disabling the dashboard UI does not disable the API.
 
-## 4. Blast-Radius Safeguards & Fail-Closed Guardrails (SAFE-02 / SAFE-07)
+The optional companion dashboard has its own authentication and proxies requests to the backend. Configure both layers deliberately rather than assuming frontend authentication protects a separately published backend.
 
-1. **Docker Daemon Degradation:** If the Docker daemon disconnects, times out, or returns HTTP 5xx errors, discovery snapshot sets `docker_ok=False`. The reconciler immediately **fails closed**: zero writes, zero updates, zero deletes.
-2. **Sudden Container Inventory Drop:** If previous sync cycles discovered 2 or more services, and the current cycle discovers 0 services (e.g., during a Docker daemon restart or compose reload), `cf-tunnel-sync` logs a high-priority safety warning and enforces the full tombstone grace period (`DNS_CLEANUP_GRACE_PERIOD`), preventing mass route wipeout.
-3. **Mass Deletion Ceiling:**
-   - `MAX_DELETIONS_PER_SYNC` (default: 3) limits the maximum number of route deletions in a single sync cycle.
-   - Exceeding the threshold trips `BlastRadiusExceededError` and marks the sync state as `SAFETY_GUARD_TRIPPED`.
-   - Even when `ALLOW_MASS_DELETIONS=true` is explicitly configured, unmanaged and foreign records remain strictly protected.
+## Public applications and Access metadata
+
+A working tunnel makes a route reachable; it does not add application authorization. `cf.tunnel.access.policy` only annotates service status. Configure and verify the application's own authentication or a Cloudflare Access application/policy before treating an admin service as protected.
+
+## Managed resource safety
+
+DNS ownership comments, cleanup grace periods, and deletion limits reduce accidental changes. The default ownership policy can adopt matching untagged records for active services. Existing manual ingress and absent DNS ownership fields have known limitations. Read [architecture and safety](architecture-and-safety.md#current-limitations) before using an existing tunnel or dry-run as a protection boundary.
+
+For image identity and release artifacts, see [container releases](release-security.md).

@@ -1,96 +1,62 @@
-# Docker Networking & Traffic Flow Guide
+# Docker networking and traffic flow
 
-This document explains the network topology, packet flow from Cloudflare Edge to Docker containers, and best practices for eliminating `502 Bad Gateway` routing errors.
+`cloudflared` must be able to reach the application's internal address and port. The synchronizer only configures routing; it does not proxy requests.
 
----
-
-## 1. Control Plane vs. Data Plane Architecture
-
-A fundamental design principle of `cf-docker-tunnel-sync` is the strict separation between the **Control Plane** and the **Data Plane**:
+## Request path
 
 ```mermaid
-flowchart TD
-    subgraph Cloudflare Global Anycast Edge
-        Edge["Cloudflare Edge Anycast<br/>https://app.example.com"]
-        API["Cloudflare API<br/>Zero Trust & DNS"]
-    end
-
-    subgraph Docker Host
-        CFD["cloudflared<br/>(DATA PLANE DAEMON)"]
-        Sync["cf-tunnel-sync<br/>(CONTROL PLANE CONTROLLER)"]
-        App["Target Application Container<br/>(e.g., whoami, nextcloud)"]
-    end
-
-    Edge ===>|"Encrypted QUIC / HTTP2 Tunnel (Outbound Port 7844)"| CFD
-    CFD -->|"Internal Docker Bridge Network (cf-tunnel-net)"| App
-    Sync -->|"1. Inspects Labels & Ports"| App
-    Sync -->|"2. Configures Ingress & DNS"| API
-    Sync -.->|"3. Writes Token File (/etc/cloudflared/token)"| CFD
+flowchart LR
+    Browser[Browser] --> Edge[Cloudflare edge]
+    Edge --> Connector[cloudflared]
+    Connector --> Origin[Application container]
+    Sync[Synchronizer] --> API[Cloudflare API]
+    Sync --> Docker[Docker inventory]
 ```
 
-* **Control Plane (`cf-tunnel-sync`):**
-  - Communicates with the Docker Engine and the Cloudflare REST API.
-  - Computes the ChangePlan, updates remote ingress rules, synchronizes DNS CNAMEs, and writes the credentials token file.
-  - **Does NOT proxy application traffic.**
-* **Data Plane (`cloudflared`):**
-  - Official Cloudflare daemon running alongside the sync controller.
-  - Establishes encrypted outbound connections to Cloudflare's nearest edge data center.
-  - Forwards incoming requests to your application containers across the private Docker bridge network.
+For a typical HTTP application, the ingress target is `http://<container-name>:<port>`. Docker resolves the name on a shared network. The application must listen on a reachable container interface, usually `0.0.0.0`, rather than only on its own loopback interface.
 
----
+Host port publication is not needed for this path. A published host port and the application's internal listening port are different settings.
 
-## 2. Packet Flow: Step-by-Step
+## One Compose stack
 
-When an external user visits `https://app.example.com`:
-1. The user's browser resolves `app.example.com` to Cloudflare's Edge Anycast IP addresses.
-2. Cloudflare Edge routes the HTTP request across the existing Argo Tunnel established by your `cloudflared` container.
-3. `cloudflared` receives the request inside the Docker host.
-4. `cloudflared` queries Docker's internal embedded DNS server (`127.0.0.11`) to resolve the destination service name (e.g. `http://my-app:80`).
-5. `cloudflared` sends the HTTP request directly to `my-app` across the shared bridge network (`cf-tunnel-net`).
-6. The response flows back through `cloudflared` to Cloudflare Edge and the user.
+Put the connector and application on the same network. The synchronizer also joins the gateway network in the supplied examples. See the [single-stack example](../examples/01-quickstart-single-stack/README.md).
 
----
+## Separate Compose stacks
 
-## 3. Network Topologies
+Start a gateway stack that creates the named network. Application stacks refer to it as external:
 
-### Topology 1: Single-Stack (All-in-One Compose)
-All services (`cloudflared`, `cf-tunnel-sync`, and app containers) are defined in one `docker-compose.yml` sharing an internal bridge network:
-* See: [`examples/01-quickstart-single-stack/`](../examples/01-quickstart-single-stack/README.md)
+```yaml
+services:
+  web:
+    image: nginx:alpine
+    networks:
+      - default
+      - cf-tunnel-net
+    labels:
+      cf.tunnel.hostname: web.example.com
+      cf.tunnel.port: "80"
 
-### Topology 2: Decoupled Multi-Stack (External Network)
-In real-world environments, services run in separate Compose stacks. To allow `cloudflared` to reach services in other stacks:
-1. Create a dedicated external bridge network once:
-   ```bash
-   docker network create cf-tunnel-net
-   ```
-2. Attach `cloudflared` and `cf-tunnel-sync` to `cf-tunnel-net`.
-3. In each independent application Compose file, attach the web-facing service to `cf-tunnel-net`:
-   ```yaml
-   services:
-     web:
-       image: my-service:latest
-       networks:
-         - default
-         - cf-tunnel-net
-       labels:
-         - "cf.tunnel.enable=true"
-         - "cf.tunnel.hostname=service.example.com"
+networks:
+  cf-tunnel-net:
+    external: true
+```
 
-   networks:
-     cf-tunnel-net:
-       external: true
-   ```
-* See: [`examples/02-multi-stack-external-net/`](../examples/02-multi-stack-external-net/README.md)
+Alternatively, create the network yourself before starting stacks that all declare it external:
 
----
+```bash
+docker network create cf-tunnel-net
+```
 
-## 4. Why `502 Bad Gateway` Happens (and How to Fix It)
+Choose one network-creation approach. See the [separate-stack walkthrough](../examples/02-multi-stack-external-net/README.md) for complete files.
 
-`HTTP 502 Bad Gateway` means Cloudflare Edge reached your `cloudflared` daemon, but `cloudflared` could not connect to your container.
+## Discovery and diagnostics
 
-| Root Cause | Technical Reason | Fix |
-| :--- | :--- | :--- |
-| **Missing Network Attachment** | Target container is not attached to `cf-tunnel-net`. | Add `cf-tunnel-net` to the container's `networks:` block. |
-| **Listening on `127.0.0.1`** | Target service inside the container only binds to localhost loopback instead of `0.0.0.0`. | Configure application server (e.g. Uvicorn, Puma, Node) to bind to `0.0.0.0`. |
-| **Port Mismatch** | `cf.tunnel.port` differs from the application's actual internal listening port. | Check actual container listening port and declare `cf.tunnel.port=<port>`. |
-| **Self-Signed TLS Handshake Failure** | Origin service uses HTTPS with a self-signed cert, but `noTLSVerify` is not set. | Add label `cf.tunnel.originRequest.noTLSVerify=true`. |
+The normal constructed target uses the container name; `cf.tunnel.service` can override the URL. The network plausibility check evaluates the target and known connector networks, but it is not an active HTTP or TLS reachability probe.
+
+`CF_NETWORK_NAME` defaults to `cf-tunnel-net`. Connector selection also examines configuration and candidate containers. Set `CLOUDFLARED_CONTAINER_NAME` when selection is ambiguous. `REQUIRE_SHARED_NETWORK=true` or `STRICT_NETWORK_CHECK=true` excludes origins that fail the plausibility check; otherwise they can remain configured with a warning.
+
+For unusual topologies, an explicit origin URL must be reachable **from the connector**. A successful host-side request does not prove that route works inside the connector's network.
+
+## Unreachable services
+
+For a tunnel-origin 502, compare the configured URL with the application's actual protocol, listening port, network, and TLS certificate. For 1033, check the connector's connection to Cloudflare first. The [troubleshooting guide](troubleshooting.md) separates these checks and links to Cloudflare's error reference.

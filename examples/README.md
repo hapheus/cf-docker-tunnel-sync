@@ -1,32 +1,27 @@
-# 📁 Architecture Examples & Topologies
+# Deployment examples
 
-This directory contains battle-tested, copy-paste-ready Docker Compose configurations for every common deployment topology.
+Choose an example for your Docker Compose setup. Each gateway needs a scoped Cloudflare token, a zone you control, outbound connectivity for `cloudflared`, and Docker access for discovery. Starting it can create a tunnel and modify ingress/DNS; see the [current safety limitations](../docs/architecture-and-safety.md#current-limitations).
 
----
+| Example | What you can try |
+| --- | --- |
+| [Single stack](01-quickstart-single-stack/README.md) | Gateway, connector, and an HTTP whoami demo in one Compose file. |
+| [Separate stacks](02-multi-stack-external-net/README.md) | A gateway and an independent application sharing an external network; optional companion dashboard. |
+| [Socket proxy](03-secure-socket-proxy/README.md) | Restrict Docker access to reads and handle connector restarts manually. |
+| [TLS, headers, and ports](04-advanced-labels-tls-multiport/README.md) | Real HTTPS whoami origins with a locally generated certificate and an Nginx origin listening on two ports. |
+| [Two gateways](05-multi-account/README.md) | Separate credentials, domains, connector names, networks, token volumes, and dashboard ports. |
 
-## Example Catalog
+## Before starting
 
-| Directory | Topology / Use Case | Recommended For |
-| :--- | :--- | :--- |
-| **[`01-quickstart-single-stack`](01-quickstart-single-stack/README.md)** | **60-Second Quickstart**: Sync daemon + `cloudflared` + demo app in one file. | First-time evaluations & simple servers |
-| **[`02-multi-stack-external-net`](02-multi-stack-external-net/README.md)** | **Decoupled Gateway & Multi-App Stacks**: Connected via shared external bridge network (`cf-tunnel-net`). | **Recommended Production & Homelab** |
-| **[`03-secure-socket-proxy`](03-secure-socket-proxy/README.md)** | **Hardened Docker Socket Security**: Zero direct socket mount using `tecnativa/docker-socket-proxy` (TCP read-only). | Security-sensitive & enterprise environments |
-| **[`04-advanced-labels-tls-multiport`](04-advanced-labels-tls-multiport/README.md)** | **Complex Backends**: Self-signed internal HTTPS (`noTLSVerify`), custom `Host` header rewrite, multi-port disambiguation. | Proxmox, Nextcloud, TrueNAS, Portainer, MinIO |
-| **[`05-multi-account`](05-multi-account/README.md)** | **Multi-Account & Multi-Tunnel Scoping**: Running independent sync instances per business/personal account. | Multi-tenant & multi-account setups |
+Copy the selected directory's `.env.example` to `.env`, then replace its token/domain and any password placeholders. Files next to a Compose variant apply to that variant; the repository-root `.env` is not a global configuration for every example.
 
----
+Each README lists prerequisites and verification commands. Floating image tags make the examples easy to try; choose published versions/digests for repeatable deployment. Successful YAML/model checks alone do not establish that images were pulled or routing works on your host.
 
-## Core Invariant Across All Examples
+Examples 01–04 use fixed container names and the default network `cf-tunnel-net`. Treat them as alternative standalone setups rather than starting all of them together. Example 05 is designed for simultaneous gateways; use unique names and ports when adding more instances. Avoid a Compose project-name override that would make separate stacks share a project/volume accidentally.
 
-Every example adheres strictly to the canonical zero-configuration token contract:
-- `cloudflared` runs:
-  ```yaml
-  command: tunnel --no-autoupdate run --token-file /etc/cloudflared/token
-  volumes:
-    - cf_token_data:/etc/cloudflared
-  depends_on:
-    cf-tunnel-sync:
-      condition: service_healthy
-  ```
-- `cf-tunnel-sync` communicates with Cloudflare API, retrieves or creates the tunnel token, writes it to `/etc/cloudflared/token`, and triggers `cloudflared`.
-- The operator never needs to manually generate, copy, or expose `CLOUDFLARED_TUNNEL_TOKEN`.
+## Connector startup
+
+Every gateway shares `/etc/cloudflared/token` between the synchronizer and connector. The connector mounts it read-only and runs with `--token-file /etc/cloudflared/token`; you do not copy a token manually.
+
+These example Compose healthchecks require both a nonempty token file and a successful local `/health` request before Compose starts the connector. This is stronger than the image's default healthcheck, but does not establish a successful remote sync or origin reachability. Review logs and public application responses after startup.
+
+The socket proxy blocks automatic restart POSTs. Other examples let the synchronizer attempt a restart after writing a changed token. See [operations](../docs/operations.md) for lifecycle and cleanup; stopping the gateway does not automatically remove Cloudflare resources.

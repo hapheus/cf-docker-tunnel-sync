@@ -1,72 +1,37 @@
-# Cloudflare Scoped API Token Guide (Least Privilege)
+# Create a scoped Cloudflare API token
 
-This guide walks you through creating a **least-privilege, scoped API token** in Cloudflare.
+The synchronizer needs access to one Cloudflare account and the zone named by `DOMAIN_NAME`. Use a custom API token scoped to those resources rather than the Global API Key.
 
-> [!CAUTION]
-> **Never use your Global API Key!**  
-> Global API Keys grant unrestricted administrative access to your entire Cloudflare account, billing details, and all zones. `cf-docker-tunnel-sync` only requires scoped permissions for Tunnels and DNS.
+## Permissions
 
----
+| Scope | Resource | Permission | Used for |
+| --- | --- | --- | --- |
+| Account | Cloudflare Tunnel | Edit | Find/create a remotely managed tunnel, retrieve its token, and update ingress. |
+| Zone | DNS | Edit | Read and manage service CNAME records. |
+| Zone | Zone | Read | Look up the zone and its account. |
 
-## 📋 Required Permissions Matrix
+Cloudflare's [API tunnel setup guide](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/get-started/create-remote-tunnel-api/) describes tunnel/DNS provisioning. This project additionally resolves the zone by name.
 
-| Scope | Resource | Permission | Why Is It Needed? |
-| :--- | :--- | :--- | :--- |
-| **Account** | `Cloudflare Tunnel` | **Edit** | Creates and manages named tunnels, retrieves the tunnel token, and configures ingress rules. |
-| **Zone** | `DNS` | **Edit** | Creates, updates, and safely cleans up CNAME records for your exposed container hostnames. |
-| **Zone** | `Zone` | **Read** | Resolves domain names (e.g. `example.com`) to their corresponding `Zone ID`. |
+## Create the token
 
----
+1. Open Cloudflare's API token settings and choose a custom token. See [Create API token](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/) for current navigation.
+2. Add the permissions above.
+3. Restrict account resources to the intended account and zone resources to the intended zone. Broader scopes are unnecessary for a single gateway.
+4. Create the token and store it securely; do not include it in screenshots or support requests.
+5. Pass it into the container as `CLOUDFLARE_API_TOKEN`, along with `DOMAIN_NAME` and the intended `CLOUDFLARE_TUNNEL_NAME`.
 
-## 🛠️ Step-by-Step Walkthrough
+![Example token permission setup](screenshots/cloudflare-token-setup.png)
 
-### Step 1: Navigate to API Tokens
-1. Log in to the [Cloudflare Dashboard](https://dash.cloudflare.com/).
-2. In the top-right profile dropdown, click **My Profile**.
-3. Select **API Tokens** from the left navigation.
-4. Click **Create Token**.
+The screenshot is illustrative; dashboard labels/layout may change. Use the permission names and resource scope rather than matching every visual detail.
 
-### Step 2: Create a Custom Token
-1. Scroll to the bottom and click **Create Custom Token** (do not use predefined templates).
-2. Set a descriptive Token Name, e.g. `cf-docker-tunnel-sync-gateway`.
+## Verify access
 
-### Step 3: Configure Token Permissions
-Under **Permissions**, add the following three entries:
-* `Account` | `Cloudflare Tunnel` | `Edit`
-* `Zone` | `DNS` | `Edit`
-* `Zone` | `Zone` | `Read`
-
-### Step 4: Configure Resource Scoping
-* **Account Resources:** Select `Include` → `All accounts` (or your specific account).
-* **Zone Resources:** Select `Include` → `Specific zone` → select your target domain (or `All zones`).
-
-![Cloudflare Token Setup](screenshots/cloudflare-token-setup.png)
-
-### Step 5: Generate & Verify Token
-Click **Continue to summary** → **Create Token**. Copy the displayed token.
-
-Verify the token validity and permissions from your server terminal:
+Once the sync container is available with its environment configured:
 
 ```bash
-curl -s -X GET "https://api.cloudflare.com/client/v4/user/tokens/verify" \
-     -H "Authorization: Bearer YOUR_GENERATED_API_TOKEN" \
-     -H "Content-Type: application/json" | jq .
+docker compose exec cf-tunnel-sync python app.py --preflight
 ```
 
-Expected output:
-```json
-{
-  "result": {
-    "id": "...",
-    "status": "active"
-  },
-  "success": true,
-  "errors": [],
-  "messages": [
-    {
-      "code": 10000,
-      "message": "This API Token is valid and active"
-    }
-  ]
-}
-```
+Preflight performs read-only Docker and Cloudflare requests. It checks token activity and attempts zone/tunnel inspection. Token activity alone does not prove all required permissions, and preflight does not exercise DNS mutations. A missing tunnel is reported as a preflight failure even though normal startup can create one.
+
+Normal synchronization can create a tunnel and modify routes/DNS. Its dry-run guard does not cover initialization; read [current safety limitations](architecture-and-safety.md#current-limitations) before testing against an existing setup.

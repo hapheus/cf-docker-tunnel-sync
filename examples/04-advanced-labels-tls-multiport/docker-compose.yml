@@ -5,13 +5,12 @@ services:
     restart: unless-stopped
     command: tunnel --no-autoupdate run --token-file /etc/cloudflared/token
     volumes:
-      - cf_token_data:/etc/cloudflared
+      - cf_token_data:/etc/cloudflared:ro
     networks:
       - cf-tunnel-net
     depends_on:
       cf-tunnel-sync:
         condition: service_healthy
-
   cf-tunnel-sync:
     image: hapheus/cf-tunnel-sync:latest
     container_name: cf-tunnel-sync
@@ -21,70 +20,74 @@ services:
       - DOMAIN_NAME=${DOMAIN_NAME}
       - CLOUDFLARE_TUNNEL_NAME=${CLOUDFLARE_TUNNEL_NAME:-advanced-labels-tunnel}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-}
+      - CF_NETWORK_NAME=${CF_NETWORK_NAME:-cf-tunnel-net}
+      - CLOUDFLARED_CONTAINER_NAME=cloudflared
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - cf_token_data:/etc/cloudflared
     networks:
       - cf-tunnel-net
     healthcheck:
-      test: ["CMD", "python", "healthcheck.py"]
+      test:
+        - CMD-SHELL
+        - test -s /etc/cloudflared/token && python healthcheck.py
       interval: 10s
       timeout: 5s
       retries: 3
       start_period: 2s
-
-  # ----------------------------------------------------------------------------
-  # Scenario A: Self-Signed Internal HTTPS Service (noTLSVerify)
-  # Examples: Proxmox, TrueNAS, Unifi Controller, Portainer
-  # ----------------------------------------------------------------------------
   app-selfsigned-https:
     image: traefik/whoami:latest
     container_name: app-selfsigned-https
     restart: unless-stopped
     labels:
-      - "cf.tunnel.enable=true"
-      - "cf.tunnel.hostname=tls-app.${DOMAIN_NAME}"
-      - "cf.tunnel.service=https://app-selfsigned-https:8443"
-      - "cf.tunnel.originRequest.noTLSVerify=true"
+      - cf.tunnel.hostname=tls-app.${DOMAIN_NAME}
+      - cf.tunnel.service=https://app-selfsigned-https:8443
+      - cf.tunnel.originRequest.noTLSVerify=true
     networks:
       - cf-tunnel-net
-
-  # ----------------------------------------------------------------------------
-  # Scenario B: Custom Host Header & SNI Origin Server Name
-  # Examples: Nextcloud, Bitwarden/Vaultwarden, virtual hosts
-  # ----------------------------------------------------------------------------
+    command:
+      - --port=8443
+      - --cert=/certs/origin.crt
+      - --key=/certs/origin.key
+    volumes:
+      - ./certs:/certs:ro
   app-custom-headers:
     image: traefik/whoami:latest
     container_name: app-custom-headers
     restart: unless-stopped
     labels:
-      - "cf.tunnel.enable=true"
-      - "cf.tunnel.hostname=cloud.${DOMAIN_NAME}"
-      - "cf.tunnel.port=80"
-      - "cf.tunnel.originRequest.httpHostHeader=cloud.${DOMAIN_NAME}"
-      - "cf.tunnel.originRequest.originServerName=cloud.${DOMAIN_NAME}"
+      - cf.tunnel.hostname=cloud.${DOMAIN_NAME}
+      - cf.tunnel.port=8443
+      - cf.tunnel.httpHostHeader=cloud.${DOMAIN_NAME}
+      - cf.tunnel.originServerName=origin.internal
+      - cf.tunnel.protocol=https
+      - cf.tunnel.originRequest.noTLSVerify=true
     networks:
       - cf-tunnel-net
-
-  # ----------------------------------------------------------------------------
-  # Scenario C: Disambiguating Containers with Multiple Exposed Ports
-  # Example: Image exposes 80, 443, 8080 - explicit cf.tunnel.port resolves ambiguity
-  # ----------------------------------------------------------------------------
+    command:
+      - --port=8443
+      - --cert=/certs/origin.crt
+      - --key=/certs/origin.key
+    volumes:
+      - ./certs:/certs:ro
   app-multi-port:
-    image: traefik/whoami:latest
+    image: nginx:alpine
     container_name: app-multi-port
     restart: unless-stopped
     labels:
-      - "cf.tunnel.enable=true"
-      - "cf.tunnel.hostname=multiport.${DOMAIN_NAME}"
-      - "cf.tunnel.port=80"
+      - cf.tunnel.hostname=multiport.${DOMAIN_NAME}
+      - cf.tunnel.port=8080
     networks:
       - cf-tunnel-net
-
+    volumes:
+      - ./multiport.conf:/etc/nginx/conf.d/default.conf:ro
+    expose:
+      - '80'
+      - '8080'
 networks:
   cf-tunnel-net:
     name: ${CF_NETWORK_NAME:-cf-tunnel-net}
     driver: bridge
-
 volumes:
-  cf_token_data:
+  cf_token_data: {}

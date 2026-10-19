@@ -1,82 +1,47 @@
-# Contributing to cf-docker-tunnel-sync
+# Contributing
 
-Thank you for your interest in contributing to `cf-docker-tunnel-sync`!
+Keep changes focused on running Docker/Compose services behind Cloudflare Tunnel. See [product scope](docs/product-boundaries.md) before proposing new providers, orchestration platforms, databases, Access-policy management, or a substantial architecture change.
 
-## Development Environment Setup
+## Development environment
 
-You can set up your development environment using either [`devenv`](https://devenv.sh/) with [`direnv`](https://direnv.net/) for instant hermetic isolation, or directly using [`uv`](https://docs.astral.sh/uv/).
+Use devenv with its managed Python virtual environment and direnv:
 
-### Option A: Using devenv & direnv (Recommended for Nix users)
-
-If you have `direnv` and `devenv` installed:
 ```bash
-# Allow direnv to load the shell automatically
 direnv allow
 ```
-This automatically provisions Python 3.11, installs `uv`, `ruff`, and enables Git pre-commit hooks for code formatting.
 
-### Option B: Using uv (Fast, Cross-Platform)
+The repository's `.envrc` loads devenv. Python dependencies and development tools are managed by the project; do not install them into system Python. To invoke a command explicitly through the environment, use `devenv shell -- uv run <command>`.
+
+## Verification
+
+Agree the check scope for each task before running it. Choose checks that address the changed behavior. Available commands include:
 
 ```bash
-# 1. Clone the repository
-git clone https://github.com/hapheus/cf-docker-tunnel-sync.git
-cd cf-docker-tunnel-sync
-
-# 2. Install dependencies and dev tools
-uv sync --extra dev
+devenv shell -- uv run pytest cf-tunnel-sync/test_markdown_assets.py
+devenv shell -- uv run pytest
+devenv shell -- uv run ruff check .
 ```
 
-## Running Tests
+Use isolated fixtures and mocked APIs for local checks. A mock passing does not establish live Docker/Cloudflare behavior. Access to a running Docker daemon or authenticated services requires task-specific authorization. Required CI checks must pass before merge regardless of the agreed local subset.
 
-Run the hermetic test suite (including unit tests, wire-level mocks, and Compose schema validation):
-```bash
-uv run pytest -v
-```
+## Language and documentation
 
-## Code Quality & Linting
+Use English throughout code, comments, documentation, commit messages, issues, PRs, reviews, and release notes. Write factually and accessibly for homelab operators with Docker Compose basics.
 
-We use [`ruff`](https://docs.astral.sh/ruff/) for linting and code formatting:
-```bash
-# Check code style and linting
-uv run ruff check
+`docs/` is human-facing documentation: setup, configuration, operation, troubleshooting, integration, and architecture explanations. Keep agent instructions and implementation work plans outside it. Document current behavior, including limitations, rather than intended features or unconditional safety guarantees.
 
-# Automatically fix lint issues where possible
-uv run ruff check --fix
+Keep one reference per topic and link to it. Include local screenshots under `docs/screenshots/`. Verify relative links, examples, and expected output when changing related behavior. An environment-variable registry entry alone does not prove runtime support.
 
-# Format code
-uv run ruff format
-```
+## Changes and review
 
-## Contribution Guidelines
+Use a work branch; do not implement changes on `main` or push directly to it. Local work does not require an issue. Link an issue when one exists. Use Conventional Commit messages and describe the problem, resulting behavior, and validation in the PR.
 
-1. **GitHub Issues for Everything:**
-   - Every bug fix, feature, enhancement, or documentation update must map to an open GitHub Issue.
-   - Started issues should be assigned before implementation begins.
+Preserve existing configurations, labels, and API contracts. Explain necessary security corrections and discuss unavoidable larger compatibility changes before implementing them. Keep broad refactors separate from documentation corrections.
 
-2. **Language Policy:**
-   - All code, comments, documentation, commit messages, issue discussions, and pull requests must be strictly in **English**.
+For agent-assisted work, local editing does not authorize commits, pushes, or PR creation; obtain the user's approval first. Review/merge authorization and account roles follow the project's local agent instructions. Do not bypass required checks or branch protection.
 
-3. **Pull Request Workflow & Branch Protection:**
-   - Direct pushes to `main` are protected via GitHub Rulesets.
-   - All contributions must be submitted via Pull Requests against the `main` branch.
-   - All GitHub Actions workflows (`ruff` linting, hermetic unit tests, and live container smoke tests) must pass 100% green before any PR can be merged.
+Every merge to `main`, including documentation-only changes, requires a matching version tag and GitHub Release. Documentation-only releases increment the patch version. Prefer release automation, but confirm it exists and has completed rather than assuming a merge creates a release. Publication and automation changes require their own authorization.
 
-4. **Documentation & Asset Integrity:**
-   - Any images, screenshots, or diagrams referenced in documentation (such as in README.md or examples/) must reside in docs/screenshots/ or docs/assets/ and be committed alongside documentation changes.
-   - Hermetic test suites automatically validate that all relative links, images, and document references exist on disk.
+## Sharing diagnostics
 
-5. **Scope Policy & Non-Goals:**
-   - Review [docs/product-boundaries.md](docs/product-boundaries.md) before submitting non-trivial PRs.
-   - Resist out-of-scope abstractions, third-party DNS synchronizers, or generic LAN proxying.
-
-6. **Redacted Logs Guidance:**
-   - When filing issues or posting terminal outputs, always redact Cloudflare API tokens, passwords, and webhook URLs (`[REDACTED]`).
-   - The sync engine includes automatic runtime redaction for logs and audit events.
-
-7. **Contributor PR Checklist:**
-   - [ ] Local tests pass cleanly: `uv run pytest`
-   - [ ] Linter & formatter clean: `uv run ruff check . && uv run ruff format .`
-   - [ ] Conventional Commit messages (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`)
-   - [ ] Linked GitHub issue (`Fixes #123`)
-   - [ ] Strictly zero breaking changes to existing environment variables, labels, or compose files
-
+Review and redact logs before posting them. Do not include `.env` content, API tokens, connector tokens, passwords, or webhook secrets. Use dummy credentials in tests and examples.

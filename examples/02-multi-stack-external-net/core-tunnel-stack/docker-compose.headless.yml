@@ -5,13 +5,12 @@ services:
     restart: unless-stopped
     command: tunnel --no-autoupdate run --token-file /etc/cloudflared/token
     volumes:
-      - cf_token_data:/etc/cloudflared
+      - cf_token_data:/etc/cloudflared:ro
     networks:
       - cf-tunnel-net
     depends_on:
       cf-tunnel-sync:
         condition: service_healthy
-
   cf-tunnel-sync:
     image: hapheus/cf-tunnel-sync:latest
     container_name: cf-tunnel-sync
@@ -22,22 +21,24 @@ services:
       - CLOUDFLARE_TUNNEL_NAME=${CLOUDFLARE_TUNNEL_NAME:-homelab-gateway}
       - CF_NETWORK_NAME=${CF_NETWORK_NAME:-cf-tunnel-net}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-}
+      - CLOUDFLARED_CONTAINER_NAME=cloudflared
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - cf_token_data:/etc/cloudflared
     networks:
       - cf-tunnel-net
     healthcheck:
-      test: ["CMD", "python", "healthcheck.py"]
+      test:
+        - CMD-SHELL
+        - test -s /etc/cloudflared/token && python healthcheck.py
       interval: 10s
       timeout: 5s
       retries: 3
       start_period: 2s
-
 networks:
   cf-tunnel-net:
     name: ${CF_NETWORK_NAME:-cf-tunnel-net}
     external: true
-
 volumes:
-  cf_token_data:
+  cf_token_data: {}

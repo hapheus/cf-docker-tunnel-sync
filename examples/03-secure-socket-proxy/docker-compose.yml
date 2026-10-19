@@ -1,5 +1,4 @@
 services:
-  # Least-Privilege Docker REST API Filter
   docker-socket-proxy:
     image: tecnativa/docker-socket-proxy:latest
     container_name: docker-socket-proxy
@@ -8,32 +7,29 @@ services:
       - CONTAINERS=1
       - EVENTS=1
       - POST=0
-      - DELETE=0
       - EXEC=0
       - NETWORKS=0
       - VOLUMES=0
       - SERVICES=0
       - SWARM=0
+      - VERSION=1
+      - PING=1
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - socket-proxy-net
-
-  # Cloudflare Tunnel Connector Daemon
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: cloudflared
     restart: unless-stopped
     command: tunnel --no-autoupdate run --token-file /etc/cloudflared/token
     volumes:
-      - cf_token_data:/etc/cloudflared
+      - cf_token_data:/etc/cloudflared:ro
     networks:
       - cf-tunnel-net
     depends_on:
       cf-tunnel-sync:
         condition: service_healthy
-
-  # Sync Controller (Strictly TCP - Zero Direct Socket Mount)
   cf-tunnel-sync:
     image: hapheus/cf-tunnel-sync:latest
     container_name: cf-tunnel-sync
@@ -44,6 +40,9 @@ services:
       - DOMAIN_NAME=${DOMAIN_NAME}
       - CLOUDFLARE_TUNNEL_NAME=${CLOUDFLARE_TUNNEL_NAME:-hardened-socket-tunnel}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-}
+      - CF_NETWORK_NAME=${CF_NETWORK_NAME:-cf-tunnel-net}
+      - CLOUDFLARED_CONTAINER_NAME=cloudflared
     volumes:
       - cf_token_data:/etc/cloudflared
     networks:
@@ -52,30 +51,27 @@ services:
     depends_on:
       - docker-socket-proxy
     healthcheck:
-      test: ["CMD", "python", "healthcheck.py"]
+      test:
+        - CMD-SHELL
+        - test -s /etc/cloudflared/token && python healthcheck.py
       interval: 10s
       timeout: 5s
       retries: 3
       start_period: 2s
-
-  # Demo Target Service
   whoami:
     image: traefik/whoami:latest
     container_name: whoami-secured
     restart: unless-stopped
     labels:
-      - "cf.tunnel.enable=true"
-      - "cf.tunnel.hostname=secured.${DOMAIN_NAME}"
-      - "cf.tunnel.port=80"
+      - cf.tunnel.hostname=secured.${DOMAIN_NAME}
+      - cf.tunnel.port=80
     networks:
       - cf-tunnel-net
-
 networks:
   cf-tunnel-net:
     name: ${CF_NETWORK_NAME:-cf-tunnel-net}
     driver: bridge
   socket-proxy-net:
     internal: true
-
 volumes:
-  cf_token_data:
+  cf_token_data: {}

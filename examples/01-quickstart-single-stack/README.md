@@ -1,33 +1,47 @@
-# 🚀 Example 01: Quickstart Single Stack
+# Single-stack gateway and HTTP demo
 
-This is the simplest, complete working setup of `cf-docker-tunnel-sync`. It runs the sync controller, the Cloudflare connector daemon (`cloudflared`), and a demo `whoami` service all within a single `docker-compose.yml`.
+Run this example when you want the synchronizer, `cloudflared`, and a whoami application in one Compose stack. You need a Cloudflare zone, a [scoped token](../../docs/cloudflare-permissions.md), and Docker Compose v2. Choose a dedicated tunnel name and review [current safety limitations](../../docs/architecture-and-safety.md#current-limitations).
 
----
+## Configure and start
 
-## What It Does
+From this directory:
 
-1. **`cf-tunnel-sync` (Control Plane):** Discovers running containers, contacts the Cloudflare API, provisions the tunnel named `quickstart-tunnel`, generates the tunnel credentials into the shared volume `/etc/cloudflared/token`, and synchronizes DNS CNAME records.
-2. **`cloudflared` (Data Plane):** Starts once `cf-tunnel-sync` is healthy, reads the token from `/etc/cloudflared/token`, and establishes the encrypted outbound tunnel connection to Cloudflare edge.
-3. **`whoami` (Demo App):** Connects to `cf-tunnel-net` with two labels. `cf-tunnel-sync` automatically creates `whoami.example.com` routing to `http://whoami:80`.
+```bash
+cp .env.example .env
+```
 
----
+Replace the token and domain in `.env`. The optional account ID is forwarded when configured. `CF_NETWORK_NAME` controls both discovery and the created network. No host ports are published.
 
-## How to Run
+```bash
+docker compose up -d
+docker compose ps
+docker compose logs --tail=50 cf-tunnel-sync cloudflared
+```
 
-1. Copy the environment template:
-   ```bash
-   cp .env.example .env
-   ```
-2. Edit `.env` with your Cloudflare API token and root domain:
-   ```env
-   CLOUDFLARE_API_TOKEN=your_token_here
-   DOMAIN_NAME=example.com
-   ```
-3. Start the stack:
-   ```bash
-   docker compose up -d
-   ```
-4. Verify by curling your new subdomain:
-   ```bash
-   curl -I https://whoami.example.com
-   ```
+The sync healthcheck waits for a nonempty shared token and the local health endpoint before Compose starts `cloudflared`. This avoids starting a fresh connector without a token; check its logs for the actual edge connection.
+
+## Verify
+
+Replace the domain below with yours:
+
+```bash
+curl -I https://whoami.example.com
+```
+
+The demo normally returns HTTP 200. The hostname and explicit port labels select the running origin; an enable label is not required. Public whoami demonstrates routing, not user authentication.
+
+To inspect credentials/zone/tunnel and Docker without performing configuration mutations:
+
+```bash
+docker compose exec cf-tunnel-sync python app.py --preflight
+```
+
+A passing preflight does not prove all write permissions or public reachability. Use [troubleshooting](../../docs/troubleshooting.md) if the public request fails.
+
+## Stop and remove
+
+```bash
+docker compose down
+```
+
+This retains the token volume and remote Cloudflare resources. For complete removal, follow [operations](../../docs/operations.md#uninstalling). Do not remove a shared network/volume used by another stack.
