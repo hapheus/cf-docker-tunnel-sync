@@ -34,7 +34,7 @@ def read_environment(path):
     }
 
 
-def render_example(path):
+def render_example(path, overrides=None):
     values = read_environment(path.parent / ".env.example")
     values.update(
         CLOUDFLARE_API_TOKEN="dummy-token",
@@ -43,6 +43,7 @@ def render_example(path):
         POSTGRES_PASSWORD="dummy-database-password",
         CF_NETWORK_NAME="custom-example-network",
     )
+    values.update(overrides or {})
 
     def substitute(match):
         key, operator, default = match.groups()
@@ -81,6 +82,16 @@ def test_custom_network_and_account_settings_reach_the_actual_services(path):
         assert environment["CF_NETWORK_NAME"] == "custom-example-network"
         assert environment["CLOUDFLARE_ACCOUNT_ID"] == "dummy-account"
         assert environment["CLOUDFLARED_CONTAINER_NAME"] == config["services"]["cloudflared"]["container_name"]
+
+
+@pytest.mark.parametrize(
+    "path", [path for path in COMPOSE_FILES if "cf-tunnel-dashboard" in yaml.safe_load(path.read_text())["services"]]
+)
+def test_disabled_dashboard_auth_remains_configurable_without_a_password(path):
+    config = render_example(path, {"DASHBOARD_AUTH_ENABLED": "false", "BASIC_AUTH_PASSWORD": ""})
+    environment = service_environment(config["services"]["cf-tunnel-dashboard"])
+    assert environment["DASHBOARD_AUTH_ENABLED"] == "false"
+    assert environment["BASIC_AUTH_PASSWORD"] == ""
 
 
 @pytest.mark.parametrize("path", COMPOSE_FILES)
