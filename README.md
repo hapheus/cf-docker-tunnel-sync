@@ -80,21 +80,49 @@ Modeled after modern Kubernetes controllers, `cf-docker-tunnel-sync` operates on
 
 ## 🛡️ Safety, DNS Ownership & Security <a id="safety-and-ownership"></a><a id="safety-dns-ownership-security"></a><a id="safety-dns-ownership--security"></a>
 
-Installing an infrastructure daemon with Docker socket access and DNS write permissions requires absolute trust. Here is how `cf-docker-tunnel-sync` protects your infrastructure:
+Installing an infrastructure daemon with Docker socket access and DNS write permissions requires absolute trust. If you already have active domains, existing DNS records, or production Cloudflare Tunnels, you may wonder: **can this tool accidentally damage my existing setup?**
 
-### 1. Will this tool delete my existing, manual DNS records?
+> [!TIP]
+> **Zero-Risk Guarantee for Existing Cloudflare Setups:**  
+> `cf-docker-tunnel-sync` is engineered with a strict **fail-closed, read-only-by-default** philosophy. It will **never** delete DNS records it didn't create, **never** interfere with other tunnels, and **preserves** existing manual ingress rules. You can also run with `DRY_RUN=true` to preview all planned actions with zero mutations.
+
+### 1. Will this tool delete or overwrite my existing DNS records?
 **No. Never.**  
-`cf-docker-tunnel-sync` marks every CNAME record it creates in Cloudflare's API with an explicit metadata tag in the `comment` field:
+`cf-docker-tunnel-sync` stamps every DNS CNAME record it creates in Cloudflare's API with an explicit metadata tag in the `comment` field:
 ```text
 comment: "cf-tunnel-sync:<tunnel_name>"
 ```
-During cleanup cycles, the reconciler **only deletes CNAME records that have this exact ownership tag and point to this tunnel**. All manually created records (A, AAAA, MX, TXT, or untagged CNAMEs) are categorized as `UNMANAGED` or `UNRELATED` and are strictly protected from deletion.
+During cleanup cycles, the reconciler **only deletes CNAME records that have this exact ownership tag and point to this tunnel**. All manually created records (Apex records, A, AAAA, MX, TXT, or untagged CNAMEs) are categorized as `UNMANAGED` or `UNRELATED` and are strictly protected from deletion or modification.
 
-### 2. What happens during a container restart or image update?
+### 2. Will it interfere with my other Cloudflare Tunnels or manual ingress rules?
+**No.**  
+* **Tunnel Isolation:** The daemon operates strictly within its designated tunnel (`CLOUDFLARE_TUNNEL_NAME`, default: `cf-docker-tunnel-sync`). Other tunnels in your account are completely ignored.
+* **Manual Ingress Rule Preservation:** If your tunnel already has manually configured ingress rules that do not correspond to discovered Docker containers, the reconciler automatically detects them, marks them as unmanaged external rules, and preserves them as `NOOP`. They are never removed.
+
+### 3. How can I safely test the tool before allowing any changes?
+**Use Dry-Run Mode.**  
+Set `DRY_RUN=true` in your `.env` (or pass `--dry-run` CLI flag). In dry-run mode:
+* The reconciler discovers your Docker containers and inspects your Cloudflare state.
+* It computes the exact `ChangePlan` diff (additions, updates, deletions).
+* It logs the planned diff and exposes it at `/api/change-plan`.
+* **Zero write requests** are sent to Cloudflare. You can inspect the plan and verify everything before activating live mutations.
+
+### 4. What happens during a container restart or image update?
 **Zero DNS flapping.**  
 When a container stops during `docker compose up -d` or a host reboot, `cf-tunnel-sync` places the hostname into a **tombstone grace period** (`DNS_CLEANUP_GRACE_PERIOD=300`, 5 minutes default). If the container restarts before the grace period expires, the tombstone is cleared with **zero Cloudflare API calls**, preventing DNS cache drops and `NXDOMAIN` browser errors.
 
-### 3. Which Cloudflare API permissions are required?
+### 5. What if Docker crashes or returns an empty container list?
+**Fail-Closed Protection.**  
+If the Docker engine drops, becomes unresponsive, or returns an empty container list due to a daemon glitch, `cf-tunnel-sync` enters a fail-closed safety state:
+* All existing ingress rules and DNS records are marked `PROTECT`.
+* Zero deletions or modifications are executed against Cloudflare.
+
+### 6. Blast-Radius Protection & Circuit Breakers
+If an unexpected bulk container deletion occurs:
+* `MAX_DELETIONS_PER_SYNC=3`: If any synchronization cycle attempts to delete more than 3 routes simultaneously, the blast-radius circuit breaker trips immediately.
+* The operation halts, an alert is logged, and existing Cloudflare configuration remains completely intact. Mass deletion requires an explicit override (`ALLOW_MASS_DELETIONS=true`).
+
+### 7. Which Cloudflare API permissions are required?
 **Strict Least Privilege.** Never use your Global API Key! Create a scoped API Token with only these 3 permissions:
 
 | Scope | Resource | Permission | Why Is It Needed? |
@@ -105,13 +133,9 @@ When a container stops during `docker compose up -d` or a host reboot, `cf-tunne
 
 *Detailed step-by-step setup guide:* **[`docs/cloudflare-permissions.md`](docs/cloudflare-permissions.md)**.
 
-### 4. Why does the container need `/var/run/docker.sock`?
+### 8. Why does the container need `/var/run/docker.sock`?
 The daemon only requires **read-only** metadata access (`GET /containers/json` and `GET /events`) to discover container labels and ports. For hardened production environments, you can run `cf-tunnel-sync` **without mounting the Docker socket directly**, using an API-filtering TCP proxy:
 * *Hardened socket proxy walkthrough:* **[`examples/03-secure-socket-proxy/`](examples/03-secure-socket-proxy/README.md)**.
-
-### 5. Blast-Radius Protection & Circuit Breakers
-If the Docker daemon restarts or returns an empty container inventory, an automated circuit breaker trips:
-* `MAX_DELETIONS_PER_SYNC=3`: If a sync cycle attempts to delete more than 3 routes simultaneously, the operation halts immediately and preserves remote Cloudflare infrastructure intact.
 
 ---
 
