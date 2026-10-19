@@ -1,7 +1,7 @@
 """Native Prometheus metrics registry and text exposition format generator."""
 
 import threading
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 
 class PrometheusRegistry:
@@ -69,22 +69,22 @@ class PrometheusRegistry:
     def _labels_to_key(self, labels: Dict[str, str]) -> Tuple[Tuple[str, str], ...]:
         return tuple(sorted(labels.items()))
 
-    def inc_counter(self, name: str, value: float = 1.0, labels: Dict[str, str] = None):
+    def inc_counter(self, name: str, value: float = 1.0, labels: Optional[Dict[str, str]] = None):
         key = self._labels_to_key(labels or {})
         with self._lock:
             self._counters[(name, key)] = self._counters.get((name, key), 0.0) + value
 
-    def set_gauge(self, name: str, value: float, labels: Dict[str, str] = None):
+    def set_gauge(self, name: str, value: float, labels: Optional[Dict[str, str]] = None):
         key = self._labels_to_key(labels or {})
         with self._lock:
             self._gauges[(name, key)] = float(value)
 
-    def inc_gauge(self, name: str, value: float = 1.0, labels: Dict[str, str] = None):
+    def inc_gauge(self, name: str, value: float = 1.0, labels: Optional[Dict[str, str]] = None):
         key = self._labels_to_key(labels or {})
         with self._lock:
             self._gauges[(name, key)] = self._gauges.get((name, key), 0.0) + value
 
-    def dec_gauge(self, name: str, value: float = 1.0, labels: Dict[str, str] = None):
+    def dec_gauge(self, name: str, value: float = 1.0, labels: Optional[Dict[str, str]] = None):
         key = self._labels_to_key(labels or {})
         with self._lock:
             self._gauges[(name, key)] = self._gauges.get((name, key), 0.0) - value
