@@ -17,6 +17,8 @@ jobs:
       contents: read
       packages: write
       id-token: write
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
     strategy:
       matrix:
         include:
@@ -87,7 +89,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
 
       - name: Sign published Docker image with Cosign
-        if: ${{ github.event_name != 'pull_request' && secrets.DOCKERHUB_USERNAME != '' }}
+        if: github.event_name != 'pull_request' && env.DOCKERHUB_USERNAME != ''
         env:
           DIGEST: ${{ steps.build-and-push.outputs.digest }}
           IMAGE_REPO: ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.service }}
