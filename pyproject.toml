@@ -31,6 +31,10 @@ dev = [
 testpaths = ["cf-tunnel-sync"]
 python_files = ["test_*.py"]
 asyncio_mode = "auto"
+filterwarnings = [
+    "ignore::starlette.exceptions.StarletteDeprecationWarning",
+]
+
 
 [tool.ruff]
 line-length = 120
