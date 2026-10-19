@@ -1,6 +1,6 @@
 [project]
 name = "cf-docker-tunnel-sync"
-version = "1.20.0"
+version = "1.20.1"
 description = "Automated Cloudflare Zero Trust Tunnel & DNS synchronization for Docker containers"
 readme = "README.md"
 requires-python = ">=3.10"
