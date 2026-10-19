@@ -15,6 +15,7 @@ Automated, self-healing Cloudflare Zero Trust Tunnel & DNS CNAME synchronization
 [![CI Status](https://img.shields.io/github/actions/workflow/status/hapheus/cf-docker-tunnel-sync/ci.yml?branch=main&style=flat-square)](https://github.com/hapheus/cf-docker-tunnel-sync/actions)
 [![Daily Live Image Verification](https://github.com/hapheus/cf-docker-tunnel-sync/actions/workflows/daily-image-verification.yml/badge.svg)](https://github.com/hapheus/cf-docker-tunnel-sync/actions/workflows/daily-image-verification.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/hapheus/cf-docker-tunnel-sync/badge)](https://scorecard.dev/viewer/?uri=github.com/hapheus/cf-docker-tunnel-sync)
+[![OpenSSF Best Practices](https://img.shields.io/cii/percentage/15662?style=flat-square&logo=linuxfoundation&label=OpenSSF%20Best%20Practices)](https://www.bestpractices.dev/projects/15662)
 
 ### [Quickstart](#quickstart) • [How It Works](#how-it-works) • [Safety & Ownership](#safety-and-ownership) • [Architecture](#architecture) • [Examples](#examples) • [Docs](docs/)
 
