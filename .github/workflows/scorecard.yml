@@ -13,6 +13,7 @@ on:
     - cron: '42 17 * * 4'
   push:
     branches: [ "main" ]
+  workflow_dispatch:
 
 # Declare default permissions as read only.
 permissions: read-all
@@ -71,6 +72,6 @@ jobs:
           retention-days: 5
 
       - name: "Upload to code-scanning"
-        uses: github/codeql-action/upload-sarif@4c50b6f6fd9dc6fe03111c2d045c8be2a724cce1 # v3.28.11
+        uses: github/codeql-action/upload-sarif@6bb031afdd8eb862ea3fc1848194185e076637e5 # v3.28.11
         with:
           sarif_file: results.sarif
