@@ -41,6 +41,9 @@ updates:
       docker-dependencies:
         patterns:
           - "*"
+    ignore:
+      - dependency-name: "python"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
   # Maintain Dockerfile base images for cf-tunnel-dashboard
   - package-ecosystem: "docker"

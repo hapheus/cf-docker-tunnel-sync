@@ -1,5 +1,6 @@
 import asyncio
 import http.client
+import inspect
 import ipaddress
 import json
 import logging
@@ -512,7 +513,7 @@ class DebouncedSyncTrigger:
             add_log(f"Debounce window elapsed ({self.delay}s), executing sync: {reason_str}")
             try:
                 if self.sync_target:
-                    if asyncio.iscoroutinefunction(self.sync_target):
+                    if inspect.iscoroutinefunction(self.sync_target):
                         await self.sync_target()
                     else:
                         await asyncio.to_thread(self.sync_target)
