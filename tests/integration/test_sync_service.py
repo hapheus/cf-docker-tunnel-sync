@@ -100,6 +100,23 @@ def test_inventory_recovers_to_successful_empty_after_failure():
     assert inventory.services == ()
 
 
+@pytest.mark.parametrize("available", [True, False])
+@pytest.mark.parametrize("path", ["/api/sync/preview", "/api/change-plan"])
+def test_preview_uses_current_inventory_availability_after_connection_changes(available, path):
+    services, cf, docker, store = composition()
+    services.runtime.data["docker_connected"] = not available
+    services.runtime.publish()
+    docker.unavailable = not available
+    client = TestClient(create_http_app(services))
+    response = client.get(path)
+    assert response.status_code == 200
+    if path == "/api/sync/preview":
+        assert response.json()["plan"]["summary"]["total_services_discovered"] == int(available)
+    else:
+        assert response.json()["summary"]["additions"] == 2 * int(available)
+    assert not cf.calls and not store.writes and not docker.restarts
+
+
 def test_status_reads_and_concurrent_sync_do_not_wait_for_provider_io():
     entered, release = threading.Event(), threading.Event()
     cf = FakeCloudflare()

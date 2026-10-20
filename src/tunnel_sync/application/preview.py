@@ -4,6 +4,7 @@ import time
 import uuid
 from typing import Any, Callable
 
+from tunnel_sync.application.inventory import InventoryResult
 from tunnel_sync.domain.models import RemoteState
 from tunnel_sync.domain.planner import compute_change_plan
 from tunnel_sync.domain.snapshots import build_discovery_snapshot
@@ -19,11 +20,15 @@ def compute_preview(
     clock=time.time,
     new_plan_id=None,
 ):
-    services, containers = discover()
+    inventory = discover()
+    if isinstance(inventory, InventoryResult):
+        services, containers = list(inventory.services), list(inventory.containers)
+        docker_ok = inventory.usable
+    else:
+        services, containers = inventory
+        docker_ok = state.get("docker_connected", True)
     now = clock()
-    snapshot = build_discovery_snapshot(
-        services, containers, timestamp=now, docker_ok=state.get("docker_connected", True)
-    )
+    snapshot = build_discovery_snapshot(services, containers, timestamp=now, docker_ok=docker_ok)
     tunnel_id = state.get("tunnel_id") or "preview-tunnel-id"
     remote = RemoteState(
         tunnel_id=tunnel_id,

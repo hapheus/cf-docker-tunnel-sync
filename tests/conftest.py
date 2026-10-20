@@ -25,7 +25,11 @@ def legacy_module_contract(monkeypatch):
     monkeypatch.setattr(app._services, "settings", SimpleNamespace(get=os.getenv))
     monkeypatch.setattr(app._services, "snapshot", lambda: deepcopy(app.sync_state))
     monkeypatch.setattr(app._services, "cache_preview", cache_preview)
-    monkeypatch.setattr(app._services, "discovery", SimpleNamespace(discover=lambda: app.get_docker_containers()))
+    monkeypatch.setattr(
+        app._services,
+        "discovery",
+        SimpleNamespace(discover=lambda: app.get_docker_containers(), collect=lambda: app.get_docker_containers()),
+    )
     monkeypatch.setattr(
         app._services, "reporter", SimpleNamespace(update_overview_metrics=lambda: app.update_overview_metrics())
     )

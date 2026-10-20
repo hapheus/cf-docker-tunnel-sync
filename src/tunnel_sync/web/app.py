@@ -103,7 +103,7 @@ def create_http_app(container, *, settings_provider=None):
         plan = compute_preview(
             settings,
             sync_state,
-            container.discovery.discover,
+            container.discovery.collect,
             zone_id=settings.get("CLOUDFLARE_ZONE_ID") or "preview-zone-id",
         )
         return JSONResponse({"status": "computed", "plan": plan.model_dump()})
@@ -186,7 +186,7 @@ def create_http_app(container, *, settings_provider=None):
         plan = compute_preview(
             settings,
             sync_state,
-            container.discovery.discover,
+            container.discovery.collect,
             zone_id=sync_state.get("zone_id") or "preview-zone-id",
             existing_ingress=sync_state.get("_last_ingress") or [],
         )
