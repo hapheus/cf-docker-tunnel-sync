@@ -12,8 +12,8 @@ on:
 permissions: read-all
 
 jobs:
-  unit-tests:
-    name: Unit Tests (Hermetic) (${{ matrix.python-version }})
+  unit-tests-matrix:
+    name: Unit Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -54,6 +54,14 @@ jobs:
       - name: Run Hermetic Unit Tests
         run: |
           uv run --python ${{ matrix.python-version }} pytest -v
+
+  unit-tests:
+    name: Unit Tests (Hermetic)
+    needs: unit-tests-matrix
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm all matrix runs passed
+        run: echo "All matrix unit tests passed successfully"
 
   smoke-tests:
     name: Container Build & Smoke Tests
