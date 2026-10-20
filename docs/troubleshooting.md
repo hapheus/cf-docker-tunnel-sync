@@ -16,7 +16,7 @@ For non-mutating inspection of the configured Docker and Cloudflare resources:
 docker compose exec cf-tunnel-sync python app.py --preflight
 ```
 
-Preflight can fail for a missing tunnel before normal startup has created it. Passing preflight does not prove DNS write permission or application reachability. Dry-run is not a complete write barrier; read the [initialization limitation](architecture-and-safety.md#current-limitations).
+Preflight can fail for a missing tunnel before normal startup has created it. Passing preflight does not prove DNS write permission or application reachability. Dry-run prevents external writes and reports a missing tunnel as a provisioning prerequisite; see [architecture and safety](architecture-and-safety.md).
 
 ## Service is not discovered
 

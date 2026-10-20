@@ -22,7 +22,7 @@ Set `CLOUDFLARE_API_TOKEN`, `DOMAIN_NAME`, and a dedicated `CLOUDFLARE_TUNNEL_NA
 
 `MAX_DELETIONS_PER_SYNC` defaults to three and `ALLOW_MASS_DELETIONS` overrides execution deletion limits. `LOG_FORMAT=json` enables structured logs; `NOTIFICATION_WEBHOOK_URL` enables alert delivery. Pass these into the container explicitly; a Compose `.env` entry alone is not automatically injected.
 
-For read-only inspection, run `python app.py --preflight` or set `PREFLIGHT_ONLY=true`. It reads configured Docker and Cloudflare resources and exits. In contrast, `DRY_RUN=true` skips ingress/DNS execution only after initialization: a missing tunnel can still be created, its token written, and the connector restarted.
+For read-only inspection, run `python app.py --preflight` or set `PREFLIGHT_ONLY=true`. It reads configured Docker and Cloudflare resources and exits. `DRY_RUN=true` also blocks tunnel creation, token-file writes, connector restarts, and ingress/DNS mutations. If the tunnel is missing, it reports that provisioning is required.
 
 The [configuration reference](https://github.com/hapheus/cf-docker-tunnel-sync/blob/main/docs/configuration.md) distinguishes active settings from names only recognized by validation or other entry points.
 

@@ -22,5 +22,5 @@ Fixes #
    ```
 2. Run compatibility baseline and golden fixtures:
    ```bash
-   uv run pytest cf-tunnel-sync/test_compatibility_baseline.py cf-tunnel-sync/test_compat_baseline_fixtures.py
+   uv run pytest tests/contracts/test_compatibility_baseline.py tests/contracts/test_compat_baseline_fixtures.py
    ```

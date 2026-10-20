@@ -37,8 +37,8 @@ jobs:
 
       - name: Run Property & Fuzz Tests
         run: |
-          uv run pytest cf-tunnel-sync/test_fuzz_label_parser.py -v
+          uv run pytest tests/property/test_fuzz_label_parser.py -v
 
       - name: Run Standalone Fuzz Harness
         run: |
-          uv run python cf-tunnel-sync/fuzz_label_parser.py
+          uv run python scripts/fuzz_label_parser.py

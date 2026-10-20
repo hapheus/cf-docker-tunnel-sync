@@ -40,6 +40,6 @@ A working tunnel makes a route reachable; it does not add application authorizat
 
 ## Managed resource safety
 
-DNS ownership comments, cleanup grace periods, and deletion limits reduce accidental changes. The default ownership policy can adopt matching untagged records for active services. Existing manual ingress and absent DNS ownership fields have known limitations. Read [architecture and safety](architecture-and-safety.md#current-limitations) before using an existing tunnel or dry-run as a protection boundary.
+DNS ownership comments, cleanup grace periods, and deletion limits reduce accidental changes. The default ownership policy can adopt matching untagged records for active services. Missing/null/empty ownership comments are not treated as ownership. Manual paths and duplicate ingress rules are preserved; the first root route for an active discovered hostname remains managed. Read [architecture and safety](architecture-and-safety.md#current-limitations) before using an existing tunnel or dry-run as a protection boundary.
 
 For image identity and release artifacts, see [container releases](release-security.md).

@@ -92,7 +92,7 @@ The optional companion dashboard also accepts `SYNC_BACKEND_HOST` and `SYNC_BACK
 
 `PREFLIGHT_ONLY=true` or `python app.py --preflight` performs inspection and exits. It can read Docker and Cloudflare; it does not provision resources. A successful exit does not prove public reachability or every token permission.
 
-`DRY_RUN=true` or `python app.py --dry-run` skips ingress and DNS execution after computing a plan, but **initialization can still create a tunnel, write its token, and restart the connector**. Use preflight for non-mutating inspection. See [current limitations](architecture-and-safety.md#current-limitations).
+`DRY_RUN=true` or `python app.py --dry-run` prevents tunnel creation, token-file writes, connector restarts, and ingress/DNS writes. When the tunnel does not exist, the cycle reports that provisioning is required and does not invent a tunnel ID or dependent DNS target. Otherwise it reads remote state and computes a plan. Preflight provides configuration and connectivity diagnostics without provisioning. See [current limitations](architecture-and-safety.md#current-limitations).
 
 ## Settings with limited or no effect in normal sync
 
