@@ -6,7 +6,7 @@ import uvicorn
 
 from tunnel_sync.bootstrap import create_services
 from tunnel_sync.configuration.settings import Settings
-from tunnel_sync.runtime.logging import perform_startup_validation
+from tunnel_sync.runtime.logging import perform_startup_validation, setup_application_logging
 from tunnel_sync.web.app import create_app
 
 
@@ -21,6 +21,7 @@ def main():
     )
     args, unknown = parser.parse_known_args()
 
+    setup_application_logging()
     perform_startup_validation(exit_on_error=True)
 
     if args.dry_run:
