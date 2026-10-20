@@ -34,8 +34,7 @@ ENV PYTHONUNBUFFERED=1 \
 
 # Copy virtual environment and application source
 COPY --from=builder /app/.venv /app/.venv
-COPY cf-tunnel-sync/app.py cf-tunnel-sync/healthcheck.py cf-tunnel-sync/cloudflare.py cf-tunnel-sync/models.py cf-tunnel-sync/reconcile.py cf-tunnel-sync/diagnostics.py cf-tunnel-sync/config.py cf-tunnel-sync/metrics.py cf-tunnel-sync/notifications.py cf-tunnel-sync/resilience.py cf-tunnel-sync/security.py ./
-COPY cf-tunnel-sync/static ./static
+COPY src/ ./
 
 EXPOSE 8090
 

@@ -123,8 +123,8 @@ wheels = [
 
 [[package]]
 name = "cf-docker-tunnel-sync"
-version = "1.20.7"
-source = { virtual = "." }
+version = "1.21.0"
+source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx" },

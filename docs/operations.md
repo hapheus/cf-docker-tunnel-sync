@@ -77,7 +77,7 @@ To request a normal sync:
 curl --fail-with-body --user admin --request POST http://localhost:8080/api/sync
 ```
 
-This can mutate resources. The request waits for its sync call, or skips when another run holds the lock. Review returned state. `DRY_RUN` is not a fully non-mutating alternative because initialization is outside its guard; see [current limitations](architecture-and-safety.md#current-limitations).
+This can mutate resources. The request waits for its sync call, or skips when another run holds the lock. Review returned state. `DRY_RUN` prevents external writes, including initialization; see [architecture and safety](architecture-and-safety.md).
 
 ## Stopping and recovering services
 
@@ -87,7 +87,7 @@ Stopping the gateway stops its reconciliation and connector. It does not delete 
 
 To recover on a replacement host, restore your Compose configuration and credentials, recreate the shared network/volume, and start the gateway and applications. The service can obtain the existing tunnel token again. Check routing after recovery; an image starting successfully is not proof that hostnames or networks match.
 
-There is no local database, but the token volume persists and in-memory tombstones/history/caches do not. A process restart can restart a grace period and cause an ingress write.
+There is no local database, but the token volume persists and in-memory tombstones/history/caches do not. A process restart can restart a grace period. Ingress writes compare against freshly fetched remote configuration; a matching configuration is left unchanged.
 
 ## Removing a route
 

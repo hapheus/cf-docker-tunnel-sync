@@ -1,8 +1,6 @@
-import sys
-import urllib.request
+"""Preserve the historical container/local healthcheck.py command."""
 
-try:
-    urllib.request.urlopen("http://127.0.0.1:8090/health", timeout=2)
-    sys.exit(0)
-except Exception:
-    sys.exit(1)
+from tunnel_sync.runtime.healthcheck import main
+
+if __name__ == "__main__":
+    raise SystemExit(main())

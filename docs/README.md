@@ -30,4 +30,4 @@
 - [Support and prerequisites](support-matrix.md): build targets and operational boundaries.
 - [Product scope](product-boundaries.md): what the project manages.
 
-These pages describe the current implementation. In particular, Access labels are metadata rather than access controls, and dry-run does not cover tunnel initialization. Read the [current safety limitations](architecture-and-safety.md#current-limitations) before attaching an existing tunnel.
+These pages describe the current implementation. In particular, Access labels are metadata rather than access controls, and dry-run performs no external writes, including tunnel initialization. Read the [current safety limitations](architecture-and-safety.md#current-limitations) before attaching an existing tunnel.

@@ -39,7 +39,7 @@ jobs:
         if: matrix.python-version == '3.11'
         run: |
           uv lock --check
-          uv export --no-dev --frozen -o /tmp/requirements-check.txt
+          uv export --no-dev --no-emit-project --frozen -o /tmp/requirements-check.txt
           diff -u -I "^#" cf-tunnel-sync/requirements.txt /tmp/requirements-check.txt
 
       - name: Install Dependencies
@@ -54,6 +54,11 @@ jobs:
       - name: Run Hermetic Unit Tests
         run: |
           uv run --python ${{ matrix.python-version }} pytest -v
+
+      - name: Type Check Application Components
+        if: matrix.python-version == '3.11'
+        run: |
+          uv run mypy --follow-imports=silent src/tunnel_sync
 
   unit-tests:
     name: Unit Tests (Hermetic)

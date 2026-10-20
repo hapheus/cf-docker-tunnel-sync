@@ -34,4 +34,4 @@ docker compose exec cf-tunnel-sync python app.py --preflight
 
 Preflight performs read-only Docker and Cloudflare requests. It checks token activity and attempts zone/tunnel inspection. Token activity alone does not prove all required permissions, and preflight does not exercise DNS mutations. A missing tunnel is reported as a preflight failure even though normal startup can create one.
 
-Normal synchronization can create a tunnel and modify routes/DNS. Its dry-run guard does not cover initialization; read [current safety limitations](architecture-and-safety.md#current-limitations) before testing against an existing setup.
+Normal synchronization can create a tunnel and modify routes/DNS. Dry-run prevents these writes, including initialization. Read [current safety limitations](architecture-and-safety.md#current-limitations) before using an existing setup.

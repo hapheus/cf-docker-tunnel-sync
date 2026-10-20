@@ -46,9 +46,9 @@ The controller can initialize a tunnel, write the connector token to a shared vo
 
 Use a dedicated tunnel and a scoped token. Ownership comments, grace periods, and deletion limits reduce accidental cleanup, but current behavior has important boundaries:
 
-- Dry-run skips ingress/DNS execution **after initialization**; it can still create a tunnel, write its token, and restart the connector.
-- Manual ingress rules are not preserved losslessly, especially multiple paths on the same hostname.
-- A matching CNAME response without a `comment` key is treated as owned; strict ownership policy does not correct that case.
+- Dry-run performs reads and planning only: it does not create a tunnel, write its token, or restart the connector. A missing tunnel is reported as a prerequisite.
+- Manual ingress paths, duplicate rules, catch-alls, and their relative order are preserved. The first root route for an actively discovered hostname is managed by the synchronizer.
+- Missing, empty, or null DNS comments do not establish ownership. The default policy can adopt matching untagged records for active services.
 - Access labels are status metadata and do not configure authentication.
 
 Read [architecture and safety](docs/architecture-and-safety.md) and [security](docs/security.md) before connecting an existing deployment. Use `--preflight` for non-mutating inspection; it still reads configured Docker and Cloudflare resources.

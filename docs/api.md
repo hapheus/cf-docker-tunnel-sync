@@ -113,7 +113,7 @@ If no plan exists, this endpoint discovers Docker containers and computes agains
 
 Both preview paths return `status` (`cached` or `computed`) and `plan`. The plan is the serialized internal model containing `ingress_changes`, `dns_changes`, `final_ingress_rules`, and its detailed summary, rather than the action representation above. Cached mode returns the last plan, which can be from a live run. Fallback mode reads local Docker state but assumes empty remote ingress/DNS. Treat it as a local estimate, not an accurate remote diff.
 
-These GET endpoints do not execute their computed plans. They may perform Docker reads and update in-memory caches. This differs from starting the daemon in `DRY_RUN` mode, whose initialization can still mutate resources; see [safety limitations](architecture-and-safety.md#current-limitations).
+These GET endpoints do not execute their computed plans. They may perform Docker reads and update the in-memory fallback-plan cache. Starting the daemon in `DRY_RUN` mode also prevents external writes, including initialization; see [safety limitations](architecture-and-safety.md#current-limitations).
 
 ## Manual synchronization
 
