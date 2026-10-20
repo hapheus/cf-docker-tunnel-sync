@@ -195,7 +195,6 @@ def create_http_app(container, *, settings_provider=None):
 
     @app.post("/api/sync")
     async def api_sync(authenticated: bool = Depends(check_dashboard_auth)):
-        sync_state = container.snapshot()
         await container.scheduler.run_sync()
         sync_state = container.snapshot()
         return JSONResponse({"message": "Sync triggered", "state": sanitize_sync_state(sync_state)})

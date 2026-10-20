@@ -204,7 +204,6 @@ def parse_origin_labels(labels: Mapping[str, Any], c_name: str, ports: Any) -> P
     elif valid_port is not None:
         service_url = f"{proto}://{c_name}:{valid_port}"
     else:
-        ports = ports
         inspected_port = None
         if isinstance(ports, list) and ports and isinstance(ports[0], dict):
             ip = ports[0].get("PrivatePort")
