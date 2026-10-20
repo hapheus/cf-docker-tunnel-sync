@@ -1,0 +1,17 @@
+.git
+.github
+.devenv
+.venv
+scratch
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.coverage
+htmlcov
+docs
+tests
+examples
+.env*
+!*.env.example

@@ -23,7 +23,7 @@ jobs:
       matrix:
         include:
           - service: cf-tunnel-sync
-            context: ./cf-tunnel-sync
+            context: .
             file: ./cf-tunnel-sync/Dockerfile
             readme: ./cf-tunnel-sync/DOCKERHUB.md
             short_desc: "Automated route and DNS synchronization between Docker containers and Cloudflare Tunnels"

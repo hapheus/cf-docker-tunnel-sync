@@ -1,5 +1,5 @@
 # Build stage: compile dependencies and assemble virtual environment using uv
-FROM python:3.14-alpine@sha256:f6a589d43c42b9e7f7dc67a12d37132491f362859a5d750607710cc56da3bc72 AS builder
+FROM python:3.11-alpine@sha256:d9368b3a5ac59afea7b5d4f2e2aea0941dbf9fdee9c369c5bec00b98244bc929 AS builder
 
 WORKDIR /build
 
@@ -10,12 +10,14 @@ COPY --from=ghcr.io/astral-sh/uv:0.6.5@sha256:4a1f3666816dafadd20ceb71eac9a7d56d
 RUN apk add --no-cache binutils
 
 ENV UV_LINK_MODE=copy \
-    UV_COMPILE_BYTECODE=1
+    UV_COMPILE_BYTECODE=1 \
+    UV_PROJECT_ENVIRONMENT=/app/.venv
 
-# Create isolated virtualenv and install dependencies
-COPY requirements.txt ./
-RUN uv venv /app/.venv && \
-    uv pip install --no-cache --python /app/.venv -r requirements.txt
+# Copy lockfile and project configuration for single source of truth dependency installation
+COPY pyproject.toml uv.lock ./
+
+# Create isolated virtualenv and install production dependencies directly from uv.lock
+RUN uv sync --frozen --no-dev --no-install-project
 
 # Prune virtual environment: remove tests, type stubs, documentation, and strip native .so binaries
 RUN find /app/.venv -type d \( -name "tests" -o -name "test" -o -name "docs" \) -exec rm -rf {} + 2>/dev/null || true && \
@@ -23,7 +25,7 @@ RUN find /app/.venv -type d \( -name "tests" -o -name "test" -o -name "docs" \) 
     find /app/.venv -type f -name "*.so" -exec strip --strip-unneeded {} + 2>/dev/null || true
 
 # Runtime stage: minimal Alpine footprint (<25MB compressed)
-FROM python:3.14-alpine@sha256:f6a589d43c42b9e7f7dc67a12d37132491f362859a5d750607710cc56da3bc72
+FROM python:3.11-alpine@sha256:d9368b3a5ac59afea7b5d4f2e2aea0941dbf9fdee9c369c5bec00b98244bc929
 
 WORKDIR /app
 
@@ -32,8 +34,8 @@ ENV PYTHONUNBUFFERED=1 \
 
 # Copy virtual environment and application source
 COPY --from=builder /app/.venv /app/.venv
-COPY app.py healthcheck.py cloudflare.py models.py reconcile.py diagnostics.py config.py metrics.py notifications.py resilience.py security.py ./
-COPY static ./static
+COPY cf-tunnel-sync/app.py cf-tunnel-sync/healthcheck.py cf-tunnel-sync/cloudflare.py cf-tunnel-sync/models.py cf-tunnel-sync/reconcile.py cf-tunnel-sync/diagnostics.py cf-tunnel-sync/config.py cf-tunnel-sync/metrics.py cf-tunnel-sync/notifications.py cf-tunnel-sync/resilience.py cf-tunnel-sync/security.py ./
+COPY cf-tunnel-sync/static ./static
 
 EXPOSE 8090
 

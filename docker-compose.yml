@@ -13,8 +13,8 @@ services:
   cf-tunnel-sync:
     image: hapheus/cf-tunnel-sync:latest
     build:
-      context: ./cf-tunnel-sync
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: cf-tunnel-sync/Dockerfile
     restart: always
     environment:
       - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}
