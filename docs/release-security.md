@@ -22,7 +22,7 @@ Keep the old reference for rollback. See [upgrade and rollback](COMPATIBILITY.md
 
 ## Build properties
 
-The sync [Dockerfile](../cf-tunnel-sync/Dockerfile) uses a digest-pinned Python Alpine base and a uv-created virtual environment. It installs dependencies from `requirements.txt` with version ranges; the production build does not consume `uv.lock`. Consequently, rebuilding identical source can resolve different dependency versions.
+The sync [Dockerfile](../cf-tunnel-sync/Dockerfile) uses a digest-pinned Python 3.11 Alpine base and installs production dependencies deterministically from `uv.lock` using `uv sync --frozen --no-dev`. Consequently, rebuilding identical source reproduces identical dependency resolution across local development, CI, and production container builds.
 
 The sync image does not declare a non-root `USER`. The connector token directory must be writable. Do not infer non-root execution, a universally read-only filesystem setup, or reproducible dependencies from the multi-stage build alone.
 

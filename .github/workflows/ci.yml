@@ -31,6 +31,12 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Verify Lockfile and Requirements Parity
+        run: |
+          uv lock --check
+          uv export --no-dev --frozen -o /tmp/requirements-check.txt
+          diff -u -I "^#" cf-tunnel-sync/requirements.txt /tmp/requirements-check.txt
+
       - name: Install Dependencies
         run: |
           uv sync --extra dev
@@ -66,7 +72,7 @@ jobs:
         run: |
           success=0
           for i in 1 2 3; do
-            if docker build -t cf-tunnel-sync:test ./cf-tunnel-sync; then
+            if docker build -t cf-tunnel-sync:test -f ./cf-tunnel-sync/Dockerfile .; then
               success=1
               break
             fi
