@@ -3,14 +3,21 @@
 import asyncio
 import threading
 
+from tunnel_sync.domain.labels import has_tunnel_labels
 from tunnel_sync.runtime.debounce import DebouncedSyncTrigger
 
-CONTAINER_LIFECYCLE_ACTIONS = {"start", "stop", "die", "kill", "destroy", "rename", "pause", "unpause", "restart"}
+CONTAINER_LIFECYCLE_ACTIONS = {"start", "stop", "die", "destroy", "rename", "pause", "unpause", "restart"}
 
 
 class Scheduler:
-    def __init__(self, settings, run_once, events, log):
+    def __init__(self, settings, run_once, events, log, state=None):
         self.settings, self.run_once, self.events, self.log = settings, run_once, events, log
+        self.state = state
+        self.filter_unlabeled_events = str(settings.get("FILTER_UNLABELED_EVENTS", "true")).strip().lower() not in (
+            "false",
+            "0",
+            "no",
+        )
         self.debouncer = DebouncedSyncTrigger(
             delay=float(settings.get("SYNC_DEBOUNCE_SECONDS", settings.get("SYNC_DEBOUNCE_DELAY", 2.5))),
             max_delay=float(settings.get("SYNC_DEBOUNCE_MAX_DELAY", 10.0)),
@@ -88,6 +95,49 @@ class Scheduler:
             if remaining:
                 raise RuntimeError("In-flight synchronization exceeded shutdown timeout")
 
+    def is_relevant_event(self, event: dict, base_action: str) -> bool:
+        """Determine if a container lifecycle event warrants triggering a sync."""
+        if not self.filter_unlabeled_events:
+            return True
+
+        actor = event.get("Actor", {})
+        attrs = actor.get("Attributes", {}) if isinstance(actor, dict) else {}
+
+        # 1. Container has recognized tunnel configuration labels
+        if has_tunnel_labels(attrs):
+            return True
+
+        # 2. Cloudflared connector container itself (restarts/dies affect tunnel health & IP)
+        connector_target = (self.settings.get("CLOUDFLARED_CONTAINER_NAME") or "cloudflared").strip().lower()
+        c_name = str(attrs.get("name", "")).lstrip("/").lower()
+        compose_service = str(attrs.get("com.docker.compose.service", "")).lower()
+        event_id = str(event.get("id", "")).lower()
+
+        if (
+            c_name == connector_target
+            or compose_service == connector_target
+            or (len(connector_target) >= 12 and event_id.startswith(connector_target))
+            or c_name == "cloudflared"
+            or compose_service == "cloudflared"
+        ):
+            return True
+
+        # 3. Container was previously active in our tracked services (tombstone / deletion case)
+        if self.state and isinstance(self.state, dict):
+            for svc in self.state.get("services") or []:
+                if isinstance(svc, dict):
+                    svc_name = str(svc.get("name", "")).lstrip("/").lower()
+                    svc_container = str(svc.get("container", "")).lstrip("/").lower()
+                    if c_name and (c_name == svc_name or c_name == svc_container):
+                        return True
+                    if event_id and (
+                        (svc_name and event_id.startswith(svc_name))
+                        or (svc_container and event_id.startswith(svc_container))
+                    ):
+                        return True
+
+        return False
+
     def handle_event(self, event: dict):
         if not isinstance(event, dict):
             return
@@ -98,6 +148,8 @@ class Scheduler:
         action = event.get("Action", event.get("status", ""))
         base_action = action.split(":")[0].strip().lower()
         if base_action in CONTAINER_LIFECYCLE_ACTIONS:
+            if not self.is_relevant_event(event, base_action):
+                return
             actor = event.get("Actor", {})
             attrs = actor.get("Attributes", {}) if isinstance(actor, dict) else {}
             container_name = attrs.get("name", event.get("id", "unknown")[:12])

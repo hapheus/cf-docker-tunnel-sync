@@ -72,6 +72,32 @@ class TestCanonicalLabelsAndDeprecation(unittest.TestCase):
         # Warnings were NOT duplicated on second run
         self.assertEqual(len(deprecation_logs_1), len(deprecation_logs_2))
 
+    def test_has_tunnel_labels_detection(self):
+        """Verify has_tunnel_labels correctly identifies tunnel-relevant labels and ignores others."""
+        from tunnel_sync.domain.labels import has_tunnel_labels
+
+        # Modern cf.tunnel labels
+        self.assertTrue(has_tunnel_labels({"cf.tunnel.hostname": "app.example.com"}))
+        self.assertTrue(has_tunnel_labels({"cf.tunnel.port": "8080"}))
+        self.assertTrue(has_tunnel_labels({"cf.tunnel.enable": "true"}))
+
+        # Legacy and shorthand prefixes
+        self.assertTrue(has_tunnel_labels({"cloudflared.hostname": "app.example.com"}))
+        self.assertTrue(has_tunnel_labels({"cftunnel.domain": "app.example.com"}))
+        self.assertTrue(has_tunnel_labels({"tunnel.hostname": "app.example.com"}))
+
+        # Shorthand exact labels
+        self.assertTrue(has_tunnel_labels({"hostname": "app.example.com"}))
+        self.assertTrue(has_tunnel_labels({"port": "3000"}))
+        self.assertTrue(has_tunnel_labels({"proto": "https"}))
+
+        # Unrelated labels
+        self.assertFalse(has_tunnel_labels({}))
+        self.assertFalse(has_tunnel_labels({"com.docker.compose.project": "my-stack"}))
+        self.assertFalse(has_tunnel_labels({"traefik.enable": "true", "traefik.http.routers.app.rule": "Host(`...`)"}))
+        self.assertFalse(has_tunnel_labels({"org.opencontainers.image.version": "1.0"}))
+        self.assertFalse(has_tunnel_labels({"name": "postgres"}))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -47,32 +47,97 @@ class TestEventDrivenSync(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(mock_sync.call_count, 1)
 
     def test_handle_docker_event_filters(self):
-        """Verify handle_docker_event triggers on container lifecycle actions and ignores others."""
+        """Verify handle_docker_event triggers on relevant container lifecycle actions and ignores unlabelled/others."""
         with patch.object(app.debouncer, "trigger") as mock_trigger:
-            # 1. Container start event -> should trigger
+            # 1. Container with cf.tunnel.hostname start event -> should trigger
             app.handle_docker_event(
-                {"Type": "container", "Action": "start", "Actor": {"Attributes": {"name": "web-nginx"}}}
+                {
+                    "Type": "container",
+                    "Action": "start",
+                    "Actor": {"Attributes": {"name": "web-nginx", "cf.tunnel.hostname": "web.example.com"}},
+                }
             )
             mock_trigger.assert_called_with("start:web-nginx")
 
-            # 2. Container stop event -> should trigger
+            # 2. Container with cloudflared.* label stop event -> should trigger
+            mock_trigger.reset_mock()
+            app.handle_docker_event(
+                {
+                    "Type": "container",
+                    "Action": "stop",
+                    "Actor": {"Attributes": {"name": "api-service", "cloudflared.port": "8080"}},
+                }
+            )
+            mock_trigger.assert_called_with("stop:api-service")
+
+            # 3. Cloudflared connector container itself (without tunnel labels) -> should trigger
+            mock_trigger.reset_mock()
+            app.handle_docker_event(
+                {"Type": "container", "Action": "restart", "Actor": {"Attributes": {"name": "cloudflared"}}}
+            )
+            mock_trigger.assert_called_with("restart:cloudflared")
+
+            # 4. Container without labels (e.g. db-postgres) -> must be IGNORED
+            mock_trigger.reset_mock()
+            app.handle_docker_event(
+                {"Type": "container", "Action": "start", "Actor": {"Attributes": {"name": "db-postgres"}}}
+            )
+            mock_trigger.assert_not_called()
+
+            # 5. Container without labels stop -> must be IGNORED
+            mock_trigger.reset_mock()
             app.handle_docker_event(
                 {"Type": "container", "Action": "stop", "Actor": {"Attributes": {"name": "db-postgres"}}}
             )
-            mock_trigger.assert_called_with("stop:db-postgres")
+            mock_trigger.assert_not_called()
 
-            # 3. Container die event -> should trigger
-            app.handle_docker_event({"Type": "container", "Action": "die", "id": "1234567890abcdef", "Actor": {}})
-            mock_trigger.assert_called_with("die:1234567890ab")
+            # 6. Container action 'kill' -> must be IGNORED (even with labels, waiting for die/stop)
+            mock_trigger.reset_mock()
+            app.handle_docker_event(
+                {
+                    "Type": "container",
+                    "Action": "kill",
+                    "Actor": {"Attributes": {"name": "web-nginx", "cf.tunnel.hostname": "web.example.com"}},
+                }
+            )
+            mock_trigger.assert_not_called()
 
-            # 4. Image pull event -> must be ignored
+            # 7. Previously tracked active container in state, deleted/died even without attributes -> should trigger
+            mock_trigger.reset_mock()
+            app.sync_state["services"] = [{"name": "tracked-service", "hostname": "tracked.example.com"}]
+            app.handle_docker_event(
+                {"Type": "container", "Action": "die", "Actor": {"Attributes": {"name": "tracked-service"}}}
+            )
+            mock_trigger.assert_called_with("die:tracked-service")
+
+            # 8. Image pull event -> must be ignored
             mock_trigger.reset_mock()
             app.handle_docker_event({"Type": "image", "Action": "pull", "id": "sha256:abc"})
             mock_trigger.assert_not_called()
 
-            # 5. Non-lifecycle container action (e.g. top) -> must be ignored
+            # 9. Non-lifecycle container action (e.g. top) -> must be ignored
+            mock_trigger.reset_mock()
             app.handle_docker_event({"Type": "container", "Action": "top"})
             mock_trigger.assert_not_called()
+
+    def test_handle_docker_event_unlabeled_filtering_can_be_disabled(self):
+        """Verify FILTER_UNLABELED_EVENTS=false allows all container lifecycle events through."""
+        from tunnel_sync.configuration.settings import Settings
+        from tunnel_sync.runtime.scheduler import Scheduler
+
+        mock_trigger = MagicMock()
+        scheduler = Scheduler(
+            Settings({"FILTER_UNLABELED_EVENTS": "false"}),
+            run_once=MagicMock(),
+            events=MagicMock(),
+            log=MagicMock(),
+        )
+        scheduler.debouncer.trigger = mock_trigger
+
+        scheduler.handle_event(
+            {"Type": "container", "Action": "start", "Actor": {"Attributes": {"name": "unlabelled-container"}}}
+        )
+        mock_trigger.assert_called_with("start:unlabelled-container")
 
     @patch("os.path.exists", return_value=True)
     @patch("app.UnixHTTPConnection")
