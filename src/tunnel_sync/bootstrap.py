@@ -100,7 +100,7 @@ def create_services(
         dispatcher,
     )
     preflight = PreflightService(settings, reader, docker_reader, discovery)
-    scheduler = Scheduler(settings, sync.run_once, docker, reporter.add_log)
+    scheduler = Scheduler(settings, sync.run_once, docker, reporter.add_log, state=runtime.data)
     return Services(settings, runtime, reporter, discovery, sync, preflight, scheduler, metrics, dispatcher)
 
 

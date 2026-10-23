@@ -155,6 +155,43 @@ def resolve_canonical_label(label_key: str) -> str:
     return LABEL_ALIASES.get(cleaned, cleaned)
 
 
+TUNNEL_LABEL_PREFIXES = (
+    "cf.tunnel.",
+    "cloudflared.",
+    "cftunnel.",
+    "tunnel.",
+)
+
+TUNNEL_SHORTHAND_LABELS = frozenset(
+    {
+        "hostname",
+        "host",
+        "port",
+        "proto",
+        "protocol",
+        "scheme",
+        "notlsverify",
+        "origin_server_name",
+        "http_host_header",
+    }
+)
+
+
+def has_tunnel_labels(labels: Mapping[str, Any]) -> bool:
+    """Check if labels contain any recognized Cloudflare tunnel configuration keys."""
+    if not isinstance(labels, (dict, Mapping)):
+        return False
+    for key in labels:
+        if not isinstance(key, str):
+            continue
+        cleaned = key.strip().lower()
+        if any(cleaned.startswith(prefix) for prefix in TUNNEL_LABEL_PREFIXES):
+            return True
+        if cleaned in TUNNEL_SHORTHAND_LABELS:
+            return True
+    return False
+
+
 @dataclass(frozen=True)
 class ParsedOrigin:
     service_target: str

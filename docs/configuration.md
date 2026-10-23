@@ -43,6 +43,7 @@ The synchronizer reads container inventory and Docker events. It also attempts a
 | `SYNC_FALLBACK_INTERVAL` | `900` seconds | Periodic sync; precedence is this variable, `SYNC_INTERVAL`, then `POLL_INTERVAL`. |
 | `SYNC_DEBOUNCE_SECONDS` | `2.5` seconds | Coalesces bursts of Docker events; falls back to `SYNC_DEBOUNCE_DELAY`. |
 | `SYNC_DEBOUNCE_MAX_DELAY` | `10` seconds | Maximum postponement during an event burst. |
+| `FILTER_UNLABELED_EVENTS` | `true` | Ignores lifecycle events from containers without Cloudflare tunnel labels or connector roles. Set to `false` to trigger sync on all container events. |
 
 An initial sync starts when the application starts. Configure positive intervals and valid numeric values; invalid scheduling values are not uniformly validated.
 
