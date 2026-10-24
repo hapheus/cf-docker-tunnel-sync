@@ -1,11 +1,11 @@
 # Global owner for the repository
-* @hapheus @MustermenschAlex
+* @hapheus @MustermenschAlex @kuenstlichedummheit-sys
 
 # GitHub Actions workflows & security policies
-/.github/workflows/ @hapheus @MustermenschAlex
-/.github/dependabot.yml @hapheus @MustermenschAlex
-/SECURITY.md @hapheus @MustermenschAlex
+/.github/workflows/ @hapheus @MustermenschAlex @kuenstlichedummheit-sys
+/.github/dependabot.yml @hapheus @MustermenschAlex @kuenstlichedummheit-sys
+/SECURITY.md @hapheus @MustermenschAlex @kuenstlichedummheit-sys
 
 # Core synchronization and dashboard code
-/cf-tunnel-sync/ @hapheus @MustermenschAlex
-/cf-tunnel-dashboard/ @hapheus @MustermenschAlex
+/cf-tunnel-sync/ @hapheus @MustermenschAlex @kuenstlichedummheit-sys
+/cf-tunnel-dashboard/ @hapheus @MustermenschAlex @kuenstlichedummheit-sys
