@@ -1,5 +1,6 @@
 import re
 import subprocess
+from html.parser import HTMLParser
 
 from starlette.testclient import TestClient
 
@@ -10,10 +11,33 @@ EMBEDDED_INDEX_PATH = REPO_ROOT / "src" / "tunnel_sync" / "web" / "static" / "in
 STANDALONE_INDEX_PATH = REPO_ROOT / "cf-tunnel-dashboard" / "index.html"
 
 
+class _ScriptExtractor(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.in_script = False
+        self.scripts: list[str] = []
+        self._current: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]):
+        if tag.lower() == "script":
+            self.in_script = True
+            self._current = []
+
+    def handle_endtag(self, tag: str):
+        if tag.lower() == "script" and self.in_script:
+            self.in_script = False
+            self.scripts.append("".join(self._current))
+
+    def handle_data(self, data: str):
+        if self.in_script:
+            self._current.append(data)
+
+
 def extract_js_from_html(html_content: str) -> str:
-    """Extract all inline script content from HTML."""
-    scripts = re.findall(r"<script(?:\s+[^>]*)?>(.*?)</script\s*>", html_content, re.DOTALL | re.IGNORECASE)
-    return "\n".join(s for s in scripts if "fetchStatus" in s or "escapeHtml" in s or "sanitizeUrl" in s)
+    """Extract all inline script content from HTML using standard library HTMLParser."""
+    parser = _ScriptExtractor()
+    parser.feed(html_content)
+    return "\n".join(s for s in parser.scripts if "fetchStatus" in s or "escapeHtml" in s or "sanitizeUrl" in s)
 
 
 def run_js(js_code: str) -> str:
