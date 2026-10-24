@@ -17,14 +17,15 @@ on:
     branches:
       - main
 
-permissions:
-  contents: read
-  issues: write
+permissions: read-all
 
 jobs:
   verify-live-image:
     name: "Pull, Run & Verify Live Container"
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
     timeout-minutes: 10
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
 
