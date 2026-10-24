@@ -5,15 +5,18 @@ from typing import Any, Callable, Protocol
 
 
 class CloudflareReader(Protocol):
-    def read(self, endpoint: str, token: str, method: str = "GET") -> dict[str, Any]: ...
+    def read(self, endpoint: str, token: str, method: str = "GET") -> dict[str, Any]:
+        raise NotImplementedError
 
 
 class CloudflareWriter(Protocol):
-    def mutate(self, endpoint: str, token: str, method: str, data: dict | None = None) -> dict[str, Any]: ...
+    def mutate(self, endpoint: str, token: str, method: str, data: dict | None = None) -> dict[str, Any]:
+        raise NotImplementedError
 
 
 class DockerInventoryReader(Protocol):
-    def request(self, path: str, method: str = "GET", **kwargs) -> Any: ...
+    def request(self, path: str, method: str = "GET", **kwargs) -> Any:
+        raise NotImplementedError
 
 
 class DockerEventSource(Protocol):
@@ -22,30 +25,46 @@ class DockerEventSource(Protocol):
         on_event: Callable[[dict], None],
         stop_event: threading.Event | None = None,
         socket_path: str | None = None,
-    ) -> None: ...
-    def close_events(self) -> None: ...
+    ) -> None:
+        raise NotImplementedError
+
+    def close_events(self) -> None:
+        raise NotImplementedError
 
 
 class ConnectorRestarter(Protocol):
-    def restart(self, name: str) -> None: ...
+    def restart(self, name: str) -> None:
+        raise NotImplementedError
 
 
 class TokenStore(Protocol):
-    def read(self) -> str: ...
-    def write(self, token: str) -> None: ...
+    def read(self) -> str:
+        raise NotImplementedError
+
+    def write(self, token: str) -> None:
+        raise NotImplementedError
 
 
 class SyncMetrics(Protocol):
     def record_sync_run(
         self, duration: float, status: str = "success", discovered_count: int = 0, safety_tripped: bool = False
-    ) -> None: ...
-    def record_dns_op(self, operation: str, count: float = 1.0) -> None: ...
-    def record_ingress_op(self, operation: str, count: float = 1.0) -> None: ...
-    def set_gauge(self, name: str, value: float, labels: dict[str, str] | None = None) -> None: ...
+    ) -> None:
+        raise NotImplementedError
+
+    def record_dns_op(self, operation: str, count: float = 1.0) -> None:
+        raise NotImplementedError
+
+    def record_ingress_op(self, operation: str, count: float = 1.0) -> None:
+        raise NotImplementedError
+
+    def set_gauge(self, name: str, value: float, labels: dict[str, str] | None = None) -> None:
+        raise NotImplementedError
 
 
 class Notifications(Protocol):
-    def get_status(self) -> dict[str, Any]: ...
+    def get_status(self) -> dict[str, Any]:
+        raise NotImplementedError
+
     def dispatch_sync(
         self,
         event_type: str,
@@ -54,4 +73,5 @@ class Notifications(Protocol):
         level: str = "error",
         details: dict[str, Any] | None = None,
         force: bool = False,
-    ) -> tuple[bool, str]: ...
+    ) -> tuple[bool, str]:
+        raise NotImplementedError

@@ -12,6 +12,15 @@ from tunnel_sync.domain.labels import resolve_canonical_label as resolve_canonic
 
 logger = logging.getLogger("cf-tunnel-sync")
 
+__all__ = [
+    "KNOWN_ENV_VARS",
+    "CONFIG_PREFIXES",
+    "LABEL_ALIASES",
+    "resolve_canonical_label",
+    "validate_tunnel_uuid",
+    "detect_env_typos",
+]
+
 # Canonical known configuration environment variables and backward-compatible aliases
 KNOWN_ENV_VARS = {
     # Core Cloudflare credentials and tunnel target

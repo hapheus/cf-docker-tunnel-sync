@@ -17,13 +17,16 @@ class Settings:
         object.__setattr__(self, "environment", MappingProxyType(dict(self.environment)))
 
     @overload
-    def get(self, name: str) -> str | None: ...
+    def get(self, name: str) -> str | None:
+        """Lookup setting without default."""
 
     @overload
-    def get(self, name: str, default: str) -> str: ...
+    def get(self, name: str, default: str) -> str:
+        """Lookup setting with str default."""
 
     @overload
-    def get(self, name: str, default: T) -> str | T: ...
+    def get(self, name: str, default: T) -> str | T:
+        """Lookup setting with generic default."""
 
     def get(self, name: str, default=None):
         return self.environment.get(name, default)

@@ -50,6 +50,7 @@ class DebouncedSyncTrigger:
                 try:
                     target_loop = asyncio.get_running_loop()
                 except RuntimeError:
+                    # No active event loop in current thread
                     pass
 
             if target_loop and target_loop.is_running():

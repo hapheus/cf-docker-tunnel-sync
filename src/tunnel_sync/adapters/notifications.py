@@ -6,6 +6,7 @@ import os
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -20,11 +21,18 @@ def detect_webhook_type(url: str, explicit_type: Optional[str] = None) -> str:
     if explicit_type and explicit_type.strip().lower() not in ("", "auto"):
         return explicit_type.strip().lower()
 
-    url_lower = url.lower()
-    if "discord.com/api/webhooks" in url_lower:
-        return "discord"
-    if "hooks.slack.com" in url_lower:
-        return "slack"
+    try:
+        parsed = urlsplit(url)
+        hostname = (parsed.hostname or "").lower()
+        path = parsed.path
+        if (hostname == "discord.com" or hostname.endswith(".discord.com")) and "/api/webhooks" in path:
+            return "discord"
+        if hostname == "hooks.slack.com" or hostname.endswith(".hooks.slack.com"):
+            return "slack"
+    except Exception:
+        # Fallback to generic if URL cannot be parsed
+        pass
+
     return "generic"
 
 
@@ -202,6 +210,7 @@ class NotificationDispatcher:
                     try:
                         self.metrics.record_webhook_delivery("failure")
                     except Exception:
+                        # Metrics recording failure must not break notification dispatch
                         pass
                     return False, err_msg
 
@@ -214,6 +223,7 @@ class NotificationDispatcher:
                 try:
                     self.metrics.record_webhook_delivery("success")
                 except Exception:
+                    # Metrics recording failure must not break notification dispatch
                     pass
                 return True, "Alert delivered successfully"
         except Exception as e:
@@ -226,6 +236,7 @@ class NotificationDispatcher:
             try:
                 self.metrics.record_webhook_delivery("failure")
             except Exception:
+                # Metrics recording failure must not break notification dispatch
                 pass
             return False, err_msg
 
@@ -261,6 +272,7 @@ class NotificationDispatcher:
                     try:
                         self.metrics.record_webhook_delivery("failure")
                     except Exception:
+                        # Metrics recording failure must not break notification dispatch
                         pass
                     return False, err_msg
 
@@ -273,6 +285,7 @@ class NotificationDispatcher:
                 try:
                     self.metrics.record_webhook_delivery("success")
                 except Exception:
+                    # Metrics recording failure must not break notification dispatch
                     pass
                 return True, "Alert delivered successfully"
         except Exception as e:
@@ -285,5 +298,6 @@ class NotificationDispatcher:
             try:
                 self.metrics.record_webhook_delivery("failure")
             except Exception:
+                # Metrics recording failure must not break notification dispatch
                 pass
             return False, err_msg

@@ -157,6 +157,7 @@ def create_http_app(container, *, settings_provider=None):
         try:
             sync_state["alert_status"] = container.dispatcher.get_status()
         except Exception:
+            # Fallback gracefully if notification dispatcher status is not available
             pass
         return JSONResponse(sync_state.get("alert_status", {}))
 

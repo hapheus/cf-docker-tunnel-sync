@@ -125,6 +125,7 @@ class SyncService:
                     if accounts:
                         account_id = accounts[0]["id"]
                 except Exception:
+                    # Account lookup may fail if token has restricted permissions
                     pass
 
             if not account_id:

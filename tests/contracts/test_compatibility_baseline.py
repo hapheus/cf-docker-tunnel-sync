@@ -85,11 +85,11 @@ class TestSupportedBehaviorBaseline(unittest.TestCase):
             # Port default
             self.assertEqual(int(os.getenv("PORT", "8080")), 8080)
             # Require shared network default must remain false for existing setups
-            self.assertFalse(os.getenv("REQUIRE_SHARED_NETWORK", "false").lower() == "true")
+            self.assertNotEqual(os.getenv("REQUIRE_SHARED_NETWORK", "false").lower(), "true")
             # Dry run default must be false
-            self.assertFalse(os.getenv("DRY_RUN", "false").lower() == "true")
+            self.assertNotEqual(os.getenv("DRY_RUN", "false").lower(), "true")
             # Proxied default must be true
-            self.assertTrue(os.getenv("CLOUDFLARE_DNS_PROXIED", "true").lower() == "true")
+            self.assertEqual(os.getenv("CLOUDFLARE_DNS_PROXIED", "true").lower(), "true")
 
     def test_api_status_schema_contract(self):
         """COMPAT-03: Validate that /api/status matches the frozen v1.13.0 contract."""

@@ -1,13 +1,10 @@
 """Compatible ASGI/CLI entry point. Composition lives in tunnel_sync.bootstrap."""
 
 # ruff: noqa: F401
-import asyncio
 import logging
 import os
 import time
 from types import SimpleNamespace
-
-import uvicorn
 
 from tunnel_sync.adapters.cloudflare import CloudflareReadAdapter, CloudflareWriteAdapter
 from tunnel_sync.adapters.connector import DockerConnectorRestarter, FileTokenStore
@@ -174,3 +171,48 @@ handle_docker_event = _services.scheduler.handle_event
 fallback_sync_loop = _services.scheduler.fallback_loop
 sync_loop = fallback_sync_loop
 logger = logging.getLogger("cf-tunnel-sync")
+
+__all__ = [
+    "CONTAINER_LIFECYCLE_ACTIONS",
+    "DebouncedSyncTrigger",
+    "DockerAPIError",
+    "DockerClient",
+    "DockerReadAdapter",
+    "DockerUnavailableError",
+    "HealthCheckFilter",
+    "JsonLogFormatter",
+    "NetworkPlausibilityResult",
+    "Settings",
+    "UnixHTTPConnection",
+    "add_log",
+    "app",
+    "build_ingress_rules",
+    "cf_api",
+    "create_app",
+    "create_http_app",
+    "debouncer",
+    "default_dispatcher",
+    "docker_api",
+    "evaluate_origin_network_plausibility",
+    "fallback_sync_loop",
+    "find_cloudflared_container_name",
+    "get_docker_containers",
+    "get_domain_name",
+    "get_token",
+    "handle_docker_event",
+    "logger",
+    "metrics_registry",
+    "normalize_hostname",
+    "perform_startup_validation",
+    "ready",
+    "record_event",
+    "record_sync_history",
+    "resolve_target_connector_container",
+    "run_preflight_validation",
+    "run_sync_logic",
+    "setup_application_logging",
+    "sync_lock",
+    "sync_loop",
+    "sync_state",
+    "update_overview_metrics",
+]

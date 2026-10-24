@@ -181,11 +181,6 @@ class TestComposeExamplesAndSchemaValidation(unittest.TestCase):
             # Simple regex-based shell variable interpolation simulating docker compose config
             import re
 
-            def repl(m):
-                var = m.group(1) or m.group(2)
-                default = m.group(3) if len(m.groups()) >= 3 else None
-                return fixture_env.get(var, default or "")
-
             interpolated = re.sub(
                 r"\$\{(\w+):-([^}]*)\}|\$\{(\w+)\}",
                 lambda m: fixture_env.get(m.group(1) or m.group(3), m.group(2) or ""),

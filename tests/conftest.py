@@ -28,11 +28,9 @@ def legacy_module_contract(monkeypatch):
     monkeypatch.setattr(
         app._services,
         "discovery",
-        SimpleNamespace(discover=lambda: app.get_docker_containers(), collect=lambda: app.get_docker_containers()),
+        SimpleNamespace(discover=app.get_docker_containers, collect=app.get_docker_containers),
     )
-    monkeypatch.setattr(
-        app._services, "reporter", SimpleNamespace(update_overview_metrics=lambda: app.update_overview_metrics())
-    )
-    monkeypatch.setattr(app._services.scheduler, "run_once", lambda: app.run_sync_logic())
+    monkeypatch.setattr(app._services, "reporter", SimpleNamespace(update_overview_metrics=app.update_overview_metrics))
+    monkeypatch.setattr(app._services.scheduler, "run_once", app.run_sync_logic)
     monkeypatch.setattr(app._services, "metrics", metrics_registry)
     monkeypatch.setattr(app, "metrics_registry", metrics_registry)
