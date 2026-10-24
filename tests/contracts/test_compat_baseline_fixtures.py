@@ -148,7 +148,6 @@ class TestCompatBaselineFixtures(unittest.TestCase):
 
     def test_foreign_and_unrelated_dns_protection(self):
         """Validates that foreign DNS records are strictly preserved and never mutated."""
-        tagger = OwnershipTagging(tunnel_name="primary-tunnel")
         tunnel_target = "00000000-0000-0000-0000-000000000001.cfargotunnel.com"
         tagger = OwnershipTagging(tunnel_name="prod-gateway")
 

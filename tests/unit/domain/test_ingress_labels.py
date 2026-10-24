@@ -316,10 +316,7 @@ class TestTLSServiceAndLabels(unittest.TestCase):
         """TC-INV-06: Container with Labels=None should not throw AttributeError."""
         mock_docker_api.return_value = [{"Names": ["/no-labels-container"], "State": "running", "Labels": None}]
         with patch.dict(os.environ, {"DOMAIN_NAME": "example.com"}, clear=True):
-            try:
-                services, all_c = app.get_docker_containers()
-            except Exception as e:
-                self.fail(f"get_docker_containers raised exception on None labels: {e}")
+            services, all_c = app.get_docker_containers()
 
         self.assertEqual(len(services), 0)
         self.assertEqual(len(all_c), 1)

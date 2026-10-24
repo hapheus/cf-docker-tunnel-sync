@@ -41,7 +41,7 @@ def test_dashboard_frontend_dom_and_api_contract():
         assert endpoint.startswith("/api/"), f"Dashboard fetched non-API route: {endpoint}"
 
     # 3. Security: CSP meta or add_header compatibility
-    assert "https://cdn.tailwindcss.com" in index_html
+    assert '<script src="https://cdn.tailwindcss.com"></script>' in index_html
 
 
 def test_dashboard_dockerfile_and_nginx_isolation():

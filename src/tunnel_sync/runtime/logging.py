@@ -25,6 +25,7 @@ class HealthCheckFilter(logging.Filter):
             if " /health " in msg or " /health?" in msg or '"/health"' in msg or '"/health ' in msg:
                 return False
         except Exception:
+            # If inspection fails unexpectedly, do not drop the log record
             pass
         return True
 

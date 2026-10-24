@@ -182,7 +182,7 @@ class TestDiagnosticsPipelineAndTruthfulReporting(unittest.TestCase):
 
         # Ingress failed -> overall status must be Degraded (NOT Synced)
         self.assertEqual(app.sync_state["status"], "Degraded")
-        self.assertTrue(len(app.sync_state["services"]) > 0)
+        self.assertGreater(len(app.sync_state["services"]), 0)
         svc = app.sync_state["services"][0]
         self.assertEqual(svc["stages"][DiagnosticStageName.CLOUDFLARE_INGRESS.value]["status"], "FAILED")
         self.assertEqual(svc["status"], "Degraded")

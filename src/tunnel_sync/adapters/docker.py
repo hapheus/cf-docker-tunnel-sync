@@ -75,6 +75,7 @@ class DockerClient:
                 try:
                     sock.shutdown(socket.SHUT_RDWR)
                 except OSError:
+                    # Socket may already be closed or disconnected
                     pass
             connection.close()
 
@@ -175,6 +176,7 @@ class DockerClient:
                     try:
                         conn.close()
                     except Exception:
+                        # Suppress teardown errors during connection cleanup
                         pass
 
         self.report_connection(False)
@@ -264,6 +266,7 @@ class DockerClient:
                             if on_event is not None:
                                 on_event(parsed)
                         except (json.JSONDecodeError, UnicodeDecodeError):
+                            # Ignore malformed or incomplete event stream chunk
                             pass
             except Exception as e:
                 self.report_connection(False)
@@ -282,4 +285,5 @@ class DockerClient:
                     try:
                         conn.close()
                     except Exception:
+                        # Suppress teardown errors during connection cleanup
                         pass

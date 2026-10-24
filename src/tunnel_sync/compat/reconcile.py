@@ -47,6 +47,25 @@ from tunnel_sync.domain.planner import compute_change_plan as _plan
 from tunnel_sync.domain.snapshots import build_discovery_snapshot as _snapshot
 from tunnel_sync.web.serializers import serialize_change_plan
 
+__all__ = [
+    "BlastRadiusExceededError",
+    "ChangePlan",
+    "ChangePlanSummary",
+    "DiscoveredOrigin",
+    "DiscoverySnapshot",
+    "DnsActionType",
+    "IngressActionType",
+    "OwnershipPolicy",
+    "OwnershipStatus",
+    "OwnershipTagging",
+    "PlannedDnsChange",
+    "PlannedIngressChange",
+    "RemoteState",
+    "build_discovery_snapshot",
+    "compute_change_plan",
+    "execute_change_plan",
+]
+
 
 class ChangePlan(DomainChangePlan):
     """Compatibility presentation model; domain planning has no web dependency."""

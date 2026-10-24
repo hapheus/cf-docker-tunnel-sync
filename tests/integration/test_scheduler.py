@@ -28,7 +28,7 @@ async def test_scheduler_closes_listener_debounce_and_waits_for_inflight_sync():
     await asyncio.sleep(0)
     assert not closing.done()
     release.set()
-    await closing
+    _ = await closing
     assert docker.closed and not scheduler.thread.is_alive()
     assert not scheduler.tasks
     assert scheduler.debouncer._worker_task is None or scheduler.debouncer._worker_task.done()

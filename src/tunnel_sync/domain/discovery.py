@@ -119,6 +119,7 @@ def evaluate_origin_network_plausibility(
                     diagnostic_message=f"Service targets external IP address ({target_host}).",
                 )
         except ValueError:
+            # target_host is not an IP address (e.g. hostname/FQDN)
             pass
 
         if "." in target_host and not target_host.endswith(".internal") and not target_host.endswith(".local"):

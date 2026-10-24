@@ -91,6 +91,7 @@ class CloudflareClient:
                                 )
                                 raise RuntimeError(f"Cloudflare API Error ({resp.status_code}): {err_text}") from None
                         except Exception:
+                            # Response is not valid JSON or lacks error structure; fall back to raw HTTP error
                             pass
                         raise RuntimeError(f"Cloudflare HTTP {resp.status_code}: {resp.text}") from None
 
@@ -107,6 +108,8 @@ class CloudflareClient:
                         await asyncio.sleep(sleep_time)
                         continue
                     raise RuntimeError(f"Cloudflare Network Error: {e}") from None
+
+            raise RuntimeError(f"Cloudflare API failed after {retries_limit} retries on {url}")
 
         # Execute using provided or transient async client
         if client:
@@ -191,6 +194,7 @@ class CloudflareClient:
                                 )
                                 raise RuntimeError(f"Cloudflare API Error ({resp.status_code}): {err_text}") from None
                         except Exception:
+                            # Response is not valid JSON or lacks error structure; fall back to raw HTTP error
                             pass
                         raise RuntimeError(f"Cloudflare HTTP {resp.status_code}: {resp.text}") from None
 
@@ -207,6 +211,8 @@ class CloudflareClient:
                         time.sleep(sleep_time)
                         continue
                     raise RuntimeError(f"Cloudflare Network Error: {e}") from None
+
+            raise RuntimeError(f"Cloudflare API failed after {retries_limit} retries on {url}")
 
         if client:
             first_resp = _execute_single(client, f"{self.base_url}{endpoint}", data)

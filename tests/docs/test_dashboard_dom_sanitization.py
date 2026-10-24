@@ -12,7 +12,7 @@ STANDALONE_INDEX_PATH = REPO_ROOT / "cf-tunnel-dashboard" / "index.html"
 
 def extract_js_from_html(html_content: str) -> str:
     """Extract all inline script content from HTML."""
-    scripts = re.findall(r"<script(?:\s+[^>]*)?>(.*?)</script>", html_content, re.DOTALL | re.IGNORECASE)
+    scripts = re.findall(r"<script(?:\s+[^>]*)?>(.*?)</script\s*>", html_content, re.DOTALL | re.IGNORECASE)
     return "\n".join(s for s in scripts if "fetchStatus" in s or "escapeHtml" in s or "sanitizeUrl" in s)
 
 
