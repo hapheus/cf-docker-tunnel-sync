@@ -96,6 +96,18 @@ class TestCloudflareResilience(unittest.TestCase):
         self.assertEqual(parse_retry_after("999999", max_delay=60.0), 60.0)  # clamped to 60s max
         self.assertEqual(parse_retry_after(None, default_delay=2.0), 2.0)
 
+    @respx.mock
+    def test_client_request_and_sync_alias_parity(self):
+        """Unified request() and legacy sync_request() alias behave identically."""
+        respx.get("https://api.cloudflare.com/client/v4/zones").mock(
+            return_value=httpx.Response(200, json={"result": [{"id": "z1"}]})
+        )
+        res1 = self.client.request("/zones", token="fake-token")
+        res2 = self.client.sync_request("/zones", token="fake-token")
+        self.assertEqual(res1, res2)
+        self.assertEqual(res1["result"][0]["id"], "z1")
+        self.assertFalse(hasattr(self.client, "async_request"), "Dead async_request method must be removed")
+
 
 if __name__ == "__main__":
     unittest.main()
