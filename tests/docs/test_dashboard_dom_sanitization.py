@@ -9,6 +9,10 @@ from tests.paths import REPO_ROOT
 
 EMBEDDED_INDEX_PATH = REPO_ROOT / "src" / "tunnel_sync" / "web" / "static" / "index.html"
 STANDALONE_INDEX_PATH = REPO_ROOT / "cf-tunnel-dashboard" / "index.html"
+EMBEDDED_JS_PATH = REPO_ROOT / "src" / "tunnel_sync" / "web" / "static" / "dashboard.js"
+STANDALONE_JS_PATH = REPO_ROOT / "cf-tunnel-dashboard" / "dashboard.js"
+EMBEDDED_CSS_PATH = REPO_ROOT / "src" / "tunnel_sync" / "web" / "static" / "dashboard.css"
+STANDALONE_CSS_PATH = REPO_ROOT / "cf-tunnel-dashboard" / "dashboard.css"
 
 
 class _ScriptExtractor(HTMLParser):
@@ -33,11 +37,20 @@ class _ScriptExtractor(HTMLParser):
             self._current.append(data)
 
 
-def extract_js_from_html(html_content: str) -> str:
-    """Extract all inline script content from HTML using standard library HTMLParser."""
+def extract_js_from_html(html_content: str, path=None) -> str:
+    """Extract script content from HTML or associated dashboard.js file."""
     parser = _ScriptExtractor()
     parser.feed(html_content)
-    return "\n".join(s for s in parser.scripts if "fetchStatus" in s or "escapeHtml" in s or "sanitizeUrl" in s)
+    inline = "\n".join(s for s in parser.scripts if "fetchStatus" in s or "escapeHtml" in s or "sanitizeUrl" in s)
+    if inline:
+        return inline
+    if path:
+        companion_js = path.parent / "dashboard.js"
+        if companion_js.exists():
+            return companion_js.read_text(encoding="utf-8")
+    if EMBEDDED_JS_PATH.exists():
+        return EMBEDDED_JS_PATH.read_text(encoding="utf-8")
+    return ""
 
 
 def run_js(js_code: str) -> str:
@@ -47,6 +60,7 @@ def run_js(js_code: str) -> str:
         getElementById: () => ({ innerText: '', textContent: '', className: '', firstChild: null, removeChild: () => {}, appendChild: () => {} }),
         createElement: () => ({ setAttribute: () => {}, appendChild: () => {} }),
         createElementNS: () => ({ setAttribute: () => {}, appendChild: () => {} }),
+        addEventListener: () => {},
     };
     const window = { location: { reload: () => {} } };
     const setInterval = () => {};
@@ -176,31 +190,48 @@ class TestDashboardDomSanitization:
         embedded_content = EMBEDDED_INDEX_PATH.read_text(encoding="utf-8")
         standalone_content = STANDALONE_INDEX_PATH.read_text(encoding="utf-8")
 
-        # PARITY: Script logic should be identical
-        js_embedded = extract_js_from_html(embedded_content)
-        js_standalone = extract_js_from_html(standalone_content)
+        # PARITY: Script and Style assets should be identical in parity
+        js_embedded = EMBEDDED_JS_PATH.read_text(encoding="utf-8")
+        js_standalone = STANDALONE_JS_PATH.read_text(encoding="utf-8")
         assert js_embedded == js_standalone, "Embedded and standalone dashboard scripts must be identical in parity"
 
-        # No dynamic innerHTML sinks in either file
+        css_embedded = EMBEDDED_CSS_PATH.read_text(encoding="utf-8")
+        css_standalone = STANDALONE_CSS_PATH.read_text(encoding="utf-8")
+        assert css_embedded == css_standalone, "Embedded and standalone dashboard CSS must be identical in parity"
+
+        # Verify zero inline event handlers in markup
         for label, content in [("embedded", embedded_content), ("standalone", standalone_content)]:
+            assert "onclick=" not in content, f"Found inline onclick handler in {label} dashboard"
+            assert "oninput=" not in content, f"Found inline oninput handler in {label} dashboard"
+            assert "onchange=" not in content, f"Found inline onchange handler in {label} dashboard"
+
+        # No dynamic innerHTML sinks in HTML or JS
+        for label, content in [
+            ("embedded html", embedded_content),
+            ("standalone html", standalone_content),
+            ("embedded js", js_embedded),
+            ("standalone js", js_standalone),
+        ]:
             unsafe_inner_html = re.findall(
                 r"\.innerHTML\s*=\s*([^\n;]+)",
                 content,
             )
             for sink in unsafe_inner_html:
                 stripped = sink.strip()
-                assert stripped in ("''", '""'), f"Found unsafe innerHTML sink in {label} dashboard: {stripped}"
+                assert stripped in ("''", '""'), f"Found unsafe innerHTML sink in {label}: {stripped}"
 
     def test_csp_meta_tag_present(self):
-        """Both embedded and standalone dashboards must define CSP meta tags."""
+        """Both embedded and standalone dashboards must define CSP meta tags without unsafe-inline or external script CDNs."""
         for path in [EMBEDDED_INDEX_PATH, STANDALONE_INDEX_PATH]:
             content = path.read_text(encoding="utf-8")
             assert 'http-equiv="Content-Security-Policy"' in content, f"Missing CSP meta tag in {path.name}"
             assert "default-src 'self'" in content
-            assert "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com" in content
+            assert "script-src 'self'" in content
+            assert "'unsafe-inline'" not in content, f"Found unsafe-inline in {path.name} CSP"
+            assert "https://cdn.tailwindcss.com" not in content, f"Found external Tailwind CDN in {path.name} CSP"
 
     def test_fastapi_dashboard_security_headers(self):
-        """FastAPI / and /dashboard endpoints must return CSP and defensive security headers."""
+        """FastAPI / and /dashboard endpoints must return CSP and defensive security headers without unsafe-inline."""
         client = TestClient(app.app)
         for route in ["/", "/dashboard"]:
             resp = client.get(route)
@@ -208,6 +239,15 @@ class TestDashboardDomSanitization:
             assert "Content-Security-Policy" in resp.headers
             csp = resp.headers["Content-Security-Policy"]
             assert "default-src 'self'" in csp
-            assert "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com" in csp
+            assert "script-src 'self'" in csp
+            assert "'unsafe-inline'" not in csp, "FastAPI dashboard response CSP must not allow unsafe-inline"
+            assert "https://cdn.tailwindcss.com" not in csp, (
+                "FastAPI dashboard response CSP must not load external script CDN"
+            )
             assert resp.headers.get("X-Content-Type-Options") == "nosniff"
             assert resp.headers.get("X-Frame-Options") == "DENY"
+
+        # Verify static asset endpoints serve successfully
+        for asset in ["/dashboard.js", "/dashboard.css", "/static/dashboard.js", "/static/dashboard.css"]:
+            resp = client.get(asset)
+            assert resp.status_code == 200, f"Failed to retrieve static asset: {asset}"

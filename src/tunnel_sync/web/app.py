@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import Depends, FastAPI, Response, status
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 
 from tunnel_sync.application.preview import compute_preview
 from tunnel_sync.web.auth import create_auth
@@ -72,8 +72,8 @@ def create_http_app(container, *, settings_provider=None):
         headers = {
             "Content-Security-Policy": (
                 "default-src 'self'; "
-                "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; "
-                "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+                "script-src 'self'; "
+                "style-src 'self' https://fonts.googleapis.com; "
                 "font-src 'self' https://fonts.gstatic.com; "
                 "connect-src 'self'; "
                 "img-src 'self' data:; "
@@ -90,6 +90,26 @@ def create_http_app(container, *, settings_provider=None):
             content="<!DOCTYPE html><html><head><title>Cloudflare Tunnel Sync</title></head><body><h1>Cloudflare Tunnel Sync Dashboard</h1><p>Running in single-container mode. Access <a href='/api/status'>/api/status</a> for API data.</p></body></html>",
             headers=headers,
         )
+
+    @app.get("/dashboard.js")
+    @app.get("/static/dashboard.js")
+    def get_dashboard_js(authenticated: bool = Depends(check_dashboard_auth)):
+        if not is_dashboard_enabled():
+            return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"status": "disabled"})
+        js_file = os.path.join(os.path.dirname(__file__), "static", "dashboard.js")
+        if os.path.exists(js_file):
+            return FileResponse(js_file, media_type="application/javascript")
+        return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"detail": "File not found"})
+
+    @app.get("/dashboard.css")
+    @app.get("/static/dashboard.css")
+    def get_dashboard_css(authenticated: bool = Depends(check_dashboard_auth)):
+        if not is_dashboard_enabled():
+            return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"status": "disabled"})
+        css_file = os.path.join(os.path.dirname(__file__), "static", "dashboard.css")
+        if os.path.exists(css_file):
+            return FileResponse(css_file, media_type="text/css")
+        return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"detail": "File not found"})
 
     @app.get("/api/sync/preview")
     @app.get("/api/v1/sync/preview")

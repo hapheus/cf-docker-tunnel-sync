@@ -342,20 +342,21 @@ class TestDashboardUIDiagnosticsBreakdown(unittest.TestCase):
     def test_dashboard_templates_contain_diagnostic_and_history_elements(self):
         """Both embedded and companion dashboard templates expose diagnostic stages and history."""
         for path in [
-            str(REPO_ROOT / "src/tunnel_sync/web/static/index.html"),
-            str(REPO_ROOT / "cf-tunnel-dashboard/index.html"),
+            REPO_ROOT / "src/tunnel_sync/web/static/index.html",
+            REPO_ROOT / "cf-tunnel-dashboard/index.html",
         ]:
-            with open(path, "r", encoding="utf-8") as f:
-                content = f.read()
+            content = path.read_text(encoding="utf-8")
+            js_content = (path.parent / "dashboard.js").read_text(encoding="utf-8")
+            full_dashboard = content + "\n" + js_content
 
-            self.assertIn("history-chart-container", content)
-            self.assertIn("events-timeline-container", content)
-            self.assertIn("event-search-input", content)
-            self.assertIn("event-severity-select", content)
-            self.assertIn("health-state-text", content)
-            self.assertIn("safety-guard-status", content)
-            self.assertIn("LABEL_SYNTAX", content)
-            self.assertIn("CLOUDFLARE_DNS", content)
+            self.assertIn("history-chart-container", full_dashboard)
+            self.assertIn("events-timeline-container", full_dashboard)
+            self.assertIn("event-search-input", full_dashboard)
+            self.assertIn("event-severity-select", full_dashboard)
+            self.assertIn("health-state-text", full_dashboard)
+            self.assertIn("safety-guard-status", full_dashboard)
+            self.assertIn("LABEL_SYNTAX", full_dashboard)
+            self.assertIn("CLOUDFLARE_DNS", full_dashboard)
 
 
 if __name__ == "__main__":

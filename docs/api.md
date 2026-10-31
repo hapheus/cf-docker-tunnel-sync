@@ -35,6 +35,8 @@ Replace `admin` if needed. Basic authentication requires a trusted connection or
 | `GET /api/sync/preview`, `GET /api/v1/sync/preview` | Dashboard setting | Cached or locally computed plan in a wrapper. |
 | `POST /api/sync` | Dashboard setting | Waits for the sync call and returns state, HTTP 200; inspect state for success/failure. |
 | `GET /`, `GET /dashboard` | Dashboard setting | HTML when enabled, otherwise HTTP 404 JSON. |
+| `GET /dashboard.js`, `GET /static/dashboard.js` | Dashboard setting | Standalone dashboard script asset. |
+| `GET /dashboard.css`, `GET /static/dashboard.css` | Dashboard setting | Compiled dashboard utility stylesheet. |
 
 Normal FastAPI parameter-validation errors return HTTP 422. Authentication failures return HTTP 401. Runtime/request failures can produce server errors; a 200 response from a status endpoint is not a health guarantee.
 

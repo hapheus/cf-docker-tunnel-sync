@@ -22,7 +22,9 @@ def get_dashboard_dir() -> Path:
 
 def test_dashboard_frontend_dom_and_api_contract():
     """Verify cf-tunnel-dashboard/index.html elements and exclusive API consumption."""
-    index_html = (get_dashboard_dir() / "index.html").read_text(encoding="utf-8")
+    dashboard_dir = get_dashboard_dir()
+    index_html = (dashboard_dir / "index.html").read_text(encoding="utf-8")
+    dashboard_js = (dashboard_dir / "dashboard.js").read_text(encoding="utf-8")
 
     # 1. Required DOM binding targets
     required_ids = [
@@ -35,13 +37,14 @@ def test_dashboard_frontend_dom_and_api_contract():
         assert f'id="{dom_id}"' in index_html, f"Required binding element #{dom_id} missing from dashboard UI!"
 
     # 2. Strict API consumption: Must only fetch /api/* endpoints
-    fetch_matches = re.findall(r"fetch\(['\"]([^'\"]+)['\"]", index_html)
-    assert len(fetch_matches) > 0, "No fetch calls found in dashboard index.html!"
+    fetch_matches = re.findall(r"fetch\(['\"]([^'\"]+)['\"]", dashboard_js)
+    assert len(fetch_matches) > 0, "No fetch calls found in dashboard script!"
     for endpoint in fetch_matches:
         assert endpoint.startswith("/api/"), f"Dashboard fetched non-API route: {endpoint}"
 
-    # 3. Security: CSP meta or add_header compatibility
-    assert '<script src="https://cdn.tailwindcss.com"></script>' in index_html
+    # 3. Security: Decoupled local script asset and hardened CSP without external script CDN
+    assert '<script src="dashboard.js"' in index_html
+    assert "https://cdn.tailwindcss.com" not in index_html
 
 
 def test_dashboard_dockerfile_and_nginx_isolation():
