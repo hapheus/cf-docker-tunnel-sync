@@ -1,9 +1,11 @@
 """Explicit environment snapshots, preserving existing lookup precedence."""
 
+import logging
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Mapping, TypeVar, overload
 
+logger = logging.getLogger("cf-tunnel-sync")
 T = TypeVar("T")
 
 
@@ -14,7 +16,18 @@ class Settings:
     environment: Mapping[str, str] = field(repr=False)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "environment", MappingProxyType(dict(self.environment)))
+        env = dict(self.environment)
+        if "BASIC_AUTH_USERNAME" in env and not env.get("DASHBOARD_USERNAME"):
+            logger.warning(
+                "Configuration note: 'BASIC_AUTH_USERNAME' is deprecated and will be removed in a future release. Please use 'DASHBOARD_USERNAME' instead."
+            )
+            env["DASHBOARD_USERNAME"] = env["BASIC_AUTH_USERNAME"]
+        if "BASIC_AUTH_PASSWORD" in env and not env.get("DASHBOARD_PASSWORD"):
+            logger.warning(
+                "Configuration note: 'BASIC_AUTH_PASSWORD' is deprecated and will be removed in a future release. Please use 'DASHBOARD_PASSWORD' instead."
+            )
+            env["DASHBOARD_PASSWORD"] = env["BASIC_AUTH_PASSWORD"]
+        object.__setattr__(self, "environment", MappingProxyType(env))
 
     @overload
     def get(self, name: str) -> str | None:
