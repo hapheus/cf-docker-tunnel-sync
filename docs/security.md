@@ -34,6 +34,8 @@ Basic authentication does not encrypt traffic. Use a trusted local connection or
 
 The optional companion dashboard has its own authentication and proxies requests to the backend. Configure both layers deliberately rather than assuming frontend authentication protects a separately published backend.
 
+Both embedded and standalone dashboards enforce a strict Content Security Policy (`script-src 'self'`, `object-src 'none'`) with zero `'unsafe-inline'` script allowances and zero runtime CDN execution. UI scripts and styling are packaged self-contained into `/dashboard.js` and `/dashboard.css`.
+
 ## Public applications and Access metadata
 
 A working tunnel makes a route reachable; it does not add application authorization. `cf.tunnel.access.policy` only annotates service status. Configure and verify the application's own authentication or a Cloudflare Access application/policy before treating an admin service as protected.
