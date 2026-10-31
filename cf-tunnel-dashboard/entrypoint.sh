@@ -1,15 +1,22 @@
 #!/bin/sh
 
 AUTH_ENABLED=${DASHBOARD_AUTH_ENABLED:-true}
-USERNAME=${BASIC_AUTH_USERNAME:-}
-PASSWORD=${BASIC_AUTH_PASSWORD:-}
+USERNAME=${DASHBOARD_USERNAME:-${BASIC_AUTH_USERNAME:-}}
+PASSWORD=${DASHBOARD_PASSWORD:-${BASIC_AUTH_PASSWORD:-}}
+
+if [ -n "$BASIC_AUTH_USERNAME" ] && [ -z "$DASHBOARD_USERNAME" ]; then
+  echo "Configuration note: 'BASIC_AUTH_USERNAME' is deprecated and will be removed in a future release. Please use 'DASHBOARD_USERNAME' instead." >&2
+fi
+if [ -n "$BASIC_AUTH_PASSWORD" ] && [ -z "$DASHBOARD_PASSWORD" ]; then
+  echo "Configuration note: 'BASIC_AUTH_PASSWORD' is deprecated and will be removed in a future release. Please use 'DASHBOARD_PASSWORD' instead." >&2
+fi
 
 mkdir -p /etc/nginx/snippets
 
 case "$AUTH_ENABLED" in
   true)
     if [ -z "$USERNAME" ] || [ -z "$PASSWORD" ]; then
-      echo "BASIC_AUTH_USERNAME and BASIC_AUTH_PASSWORD must be set when DASHBOARD_AUTH_ENABLED=true" >&2
+      echo "BASIC_AUTH_USERNAME and BASIC_AUTH_PASSWORD must be set when DASHBOARD_AUTH_ENABLED=true (or use DASHBOARD_USERNAME and DASHBOARD_PASSWORD)" >&2
       exit 1
     fi
     printf '%s\n' "$PASSWORD" | htpasswd -i -B -c /etc/nginx/.htpasswd "$USERNAME"

@@ -69,8 +69,8 @@ The Python service listens on `0.0.0.0:8090`. The root Compose file publishes it
 | --- | --- | --- |
 | `DASHBOARD_ENABLED` | `true` | Serves `/` and `/dashboard`; also reads `EMBEDDED_DASHBOARD_ENABLED` if unset. Disabling the UI leaves API endpoints active. |
 | `DASHBOARD_AUTH_ENABLED` | Automatic | Explicit `false` disables dashboard/API auth. Explicit `true` requires nonempty username/password. If unset, credentials enable auth when present. The root Compose file explicitly defaults this to `true`. |
-| `DASHBOARD_USERNAME` | Empty | Falls back to `BASIC_AUTH_USERNAME` only when unset. |
-| `DASHBOARD_PASSWORD` | Empty | Falls back to `BASIC_AUTH_PASSWORD` only when unset. |
+| `DASHBOARD_USERNAME` | Empty | Dashboard basic auth username. Falls back to legacy alias `BASIC_AUTH_USERNAME` (deprecated) when unset. |
+| `DASHBOARD_PASSWORD` | Empty | Dashboard basic auth password. Falls back to legacy alias `BASIC_AUTH_PASSWORD` (deprecated) when unset. |
 | `METRICS_AUTH_ENABLED` | `false` | Separately protects `/metrics` using the same credentials. |
 | `LOG_LEVEL` | `INFO` | Logging verbosity. |
 | `LOG_FORMAT` | `text` | `text` or `json`. |

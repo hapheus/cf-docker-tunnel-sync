@@ -11,8 +11,10 @@ The sync backend also serves an embedded dashboard. Choose one frontend arrangem
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `DASHBOARD_AUTH_ENABLED` | `true` | Accepts `true` or `false`; enables frontend Basic Auth. |
-| `BASIC_AUTH_USERNAME` | Empty | Required when frontend authentication is enabled. |
-| `BASIC_AUTH_PASSWORD` | Empty | Required when frontend authentication is enabled. |
+| `DASHBOARD_USERNAME` | Empty | Recommended dashboard basic auth username. Falls back to `BASIC_AUTH_USERNAME`. |
+| `DASHBOARD_PASSWORD` | Empty | Recommended dashboard basic auth password. Falls back to `BASIC_AUTH_PASSWORD`. |
+| `BASIC_AUTH_USERNAME` | Empty | Legacy alias for `DASHBOARD_USERNAME` (deprecated; will be removed in a future release). |
+| `BASIC_AUTH_PASSWORD` | Empty | Legacy alias for `DASHBOARD_PASSWORD` (deprecated; will be removed in a future release). |
 | `SYNC_BACKEND_HOST` | `cf-tunnel-sync` | Backend Docker hostname. |
 | `SYNC_BACKEND_PORT` | `8090` | Backend internal API port. |
 
