@@ -1,5 +1,5 @@
 # Build stage: compile dependencies and assemble virtual environment using uv
-FROM python:3.11-alpine@sha256:5fb4bc53dd0180955e31e5245b648bbb24a4ac4ab03a1de81513642325220bcd AS builder
+FROM python:3.11-alpine@sha256:09d17d5e4c16d0a7a1eea690bcb7c6ab8616b211f8421e429e97c1bef5bd0ed2 AS builder
 
 WORKDIR /build
 
@@ -25,7 +25,7 @@ RUN find /app/.venv -type d \( -name "tests" -o -name "test" -o -name "docs" \) 
     find /app/.venv -type f -name "*.so" -exec strip --strip-unneeded {} + 2>/dev/null || true
 
 # Runtime stage: minimal Alpine footprint (<25MB compressed)
-FROM python:3.11-alpine@sha256:5fb4bc53dd0180955e31e5245b648bbb24a4ac4ab03a1de81513642325220bcd
+FROM python:3.11-alpine@sha256:09d17d5e4c16d0a7a1eea690bcb7c6ab8616b211f8421e429e97c1bef5bd0ed2
 
 WORKDIR /app
 
