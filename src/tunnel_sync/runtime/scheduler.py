@@ -61,7 +61,8 @@ class Scheduler:
                 try:
                     await heartbeat
                 except asyncio.CancelledError:
-                    pass
+                    # Heartbeat cancellation is expected on sync completion (ISS-14).
+                    self.log("Sync heartbeat stopped")
             if heartbeat_enabled:
                 self.log("Sync finished")
 

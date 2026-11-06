@@ -1,6 +1,9 @@
 """Filesystem token storage and Docker connector activation."""
 
+import logging
 import os
+
+logger = logging.getLogger("cf-tunnel-sync")
 
 
 class FileTokenStore:
@@ -22,13 +25,14 @@ class FileTokenStore:
                 if target == parent or os.path.exists(target):
                     os.chmod(target, mode)
             except OSError:
-                pass
+                # Best-effort only (ISS-05); sync continues in-memory on failure.
+                logger.debug("ISS-05: token chmod skipped for %s", target, exc_info=False)
         with open(self.path, "w", encoding="utf-8") as handle:
             handle.write(token)
         try:
             os.chmod(self.path, 0o600)
         except OSError:
-            pass
+            logger.debug("ISS-05: token chmod skipped after write", exc_info=False)
 
 
 class DockerConnectorRestarter:
