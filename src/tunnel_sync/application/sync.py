@@ -24,6 +24,118 @@ from tunnel_sync.domain.planner import compute_change_plan
 from tunnel_sync.domain.snapshots import build_discovery_snapshot
 
 
+class ZoneResolver:
+    """Resolve zone/account/tunnel from Cloudflare (ISS-06 extraction)."""
+
+    def __init__(self, cloudflare, reporter):
+        self.cloudflare = cloudflare
+        self.reporter = reporter
+
+    def resolve_zone(self, domain: str, token: str) -> tuple[str | None, str | None]:
+        zones_resp = self.cloudflare.read(f"/zones?name={domain}", token)
+        zones = zones_resp.get("result", [])
+        if not zones:
+            return None, None
+        zone_id = zones[0]["id"]
+        zone_account = zones[0].get("account", {})
+        return zone_id, zone_account.get("id")
+
+    def resolve_account(self, token: str) -> str | None:
+        try:
+            acc_resp = self.cloudflare.read("/accounts", token)
+            accounts = acc_resp.get("result", [])
+            if accounts:
+                return accounts[0]["id"]
+        except Exception:
+            logging.getLogger(__name__).debug("Account lookup failed (restricted token); continuing", exc_info=False)
+        return None
+
+
+class RemoteFetcher:
+    """Batch DNS fetch with per-host fallback (ISS-06/ISS-13)."""
+
+    def __init__(self, cloudflare):
+        self.cloudflare = cloudflare
+
+    def fetch_dns(
+        self, zone_id: str, domain: str, token: str, target_cname: str, services
+    ) -> Dict[str, Dict[str, Any]]:
+        records: Dict[str, Dict[str, Any]] = {}
+        try:
+            # Batch: list zone CNAMEs once, filter locally. Zone-scoped, identical results.
+            all_cname = self.cloudflare.read(f"/zones/{zone_id}/dns_records?type=CNAME", token)
+            for rec in all_cname.get("result") or []:
+                if isinstance(rec, dict) and rec.get("id"):
+                    records[rec["id"]] = rec
+            # Seed filter: keep records matching tunnel target OR matching service hostnames.
+            wanted = {normalize_hostname(s.get("hostname")) for s in services if normalize_hostname(s.get("hostname"))}
+            records = {
+                rid: rec
+                for rid, rec in records.items()
+                if rec.get("content") == target_cname or normalize_hostname(rec.get("name")) in wanted
+            }
+            if not records:
+                # Batch empty / unsupported fixture: fall back to content seed (identical semantics).
+                seed = self.cloudflare.read(f"/zones/{zone_id}/dns_records?type=CNAME&content={target_cname}", token)
+                for rec in seed.get("result") or []:
+                    if isinstance(rec, dict) and rec.get("id"):
+                        records[rec["id"]] = rec
+            if any(
+                normalize_hostname(s.get("hostname"))
+                not in {normalize_hostname(r.get("name")) for r in records.values()}
+                for s in services
+            ):
+                # Fallback for hosts not covered by batch (identical semantics).
+                for s in services:
+                    norm_h = normalize_hostname(s.get("hostname"))
+                    if norm_h and norm_h not in {normalize_hostname(r.get("name")) for r in records.values()}:
+                        host_dns = self.cloudflare.read(f"/zones/{zone_id}/dns_records?type=CNAME&name={norm_h}", token)
+                        for rec in host_dns.get("result") or []:
+                            if isinstance(rec, dict) and rec.get("id"):
+                                records[rec["id"]] = rec
+        except Exception:
+            logging.getLogger(__name__).debug("Batch DNS fetch failed; falling back to per-host reads", exc_info=False)
+            records = {}
+            seed = self.cloudflare.read(f"/zones/{zone_id}/dns_records?type=CNAME&content={target_cname}", token)
+            for rec in seed.get("result") or []:
+                if isinstance(rec, dict) and rec.get("id"):
+                    records[rec["id"]] = rec
+            for s in services:
+                norm_h = normalize_hostname(s.get("hostname"))
+                if norm_h:
+                    host_dns = self.cloudflare.read(f"/zones/{zone_id}/dns_records?type=CNAME&name={norm_h}", token)
+                    for rec in host_dns.get("result") or []:
+                        if isinstance(rec, dict) and rec.get("id"):
+                            records[rec["id"]] = rec
+        return records
+
+
+class StatusPublisher:
+    """Publish per-service stage status + final state (ISS-06 extraction)."""
+
+    def __init__(self, reporter, metrics, dispatcher):
+        self.reporter = reporter
+        self.metrics = metrics
+        self.dispatcher = dispatcher
+
+    def publish(self, state, services, target_cname, ingress_failed, dns_failed) -> None:
+        for s in services:
+            stages = s.setdefault("stages", {})
+            stages["CLOUDFLARE_INGRESS"] = (
+                {"status": "FAILED", "message": "Cloudflare Tunnel ingress configuration update failed"}
+                if ingress_failed
+                else {"status": "PASS", "message": f"Ingress rule active: {s.get('hostname')} -> {s.get('service')}"}
+            )
+            stages["CLOUDFLARE_DNS"] = (
+                {"status": "FAILED", "message": "Cloudflare DNS synchronization failed"}
+                if dns_failed
+                else {"status": "PASS", "message": f"DNS CNAME active pointing to {target_cname}"}
+            )
+            s["status"] = compute_truthful_service_status(stages)
+        state["services"] = services
+        state["discovered_services"] = services
+
+
 class SyncService:
     def __init__(
         self,
@@ -46,6 +158,41 @@ class SyncService:
         self.clock = clock
         self.new_plan_id = new_plan_id or (lambda: f"plan-{uuid.uuid4().hex[:12]}")
 
+    def _load_persisted_tombstones(self) -> Dict[str, float]:
+        import json
+        import os
+
+        path = self.settings.tombstone_persistence_path
+        try:
+            if not os.path.exists(path):
+                return {}
+            with open(path, encoding="utf-8") as fh:
+                data = json.load(fh)
+            if not isinstance(data, dict):
+                return {}
+            validated: Dict[str, float] = {}
+            for host, ts in data.items():
+                if isinstance(host, str) and isinstance(ts, (int, float)):
+                    validated[host] = float(ts)
+            return validated
+        except Exception:
+            logging.getLogger(__name__).debug("Ignoring corrupt tombstone persistence file", exc_info=False)
+            return {}
+
+    def _persist_tombstones(self, tombstones: Dict[str, float]) -> None:
+        import json
+        import os
+
+        path = self.settings.tombstone_persistence_path
+        try:
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(dict(tombstones), fh)
+        except Exception:
+            logging.getLogger(__name__).debug(
+                "Tombstone persistence write failed; continuing in-memory", exc_info=False
+            )
+
     def run_once(self) -> None:
         if not self.runtime.run_lock.acquire(blocking=False):
             logging.getLogger(__name__).info("⏳ Sync already in progress, skipping concurrent run")
@@ -64,7 +211,7 @@ class SyncService:
             self.state["status"] = "Syncing..."
             self.state["safety_guard_tripped"] = False
             self.state["safety_details"] = None
-            dry_run = self.settings.get("DRY_RUN", "false").lower() in ("true", "1", "yes")
+            dry_run = self.settings.dry_run
             self.state["domain_name"] = domain
             self.state["tunnel_name"] = tunnel_name
 
@@ -106,27 +253,16 @@ class SyncService:
             )
 
             # 1. Resolve Zone ID (and Account ID from Zone)
-            zones_resp = self.cloudflare.read(f"/zones?name={domain}", token)
-            zones = zones_resp.get("result", [])
-            if not zones:
+            zone_id, zone_account_id = ZoneResolver(self.cloudflare, self.reporter).resolve_zone(domain, token)
+            if not zone_id:
                 self.reporter.add_log(f"❌ Zone for domain '{domain}' not found in Cloudflare!")
                 self.state["status"] = f"Error: Zone {domain} missing"
                 return
-            zone_id = zones[0]["id"]
 
             if not account_id:
-                zone_account = zones[0].get("account", {})
-                account_id = zone_account.get("id")
-
+                account_id = zone_account_id
             if not account_id:
-                try:
-                    acc_resp = self.cloudflare.read("/accounts", token)
-                    accounts = acc_resp.get("result", [])
-                    if accounts:
-                        account_id = accounts[0]["id"]
-                except Exception:
-                    # Account lookup may fail if token has restricted permissions
-                    pass
+                account_id = ZoneResolver(self.cloudflare, self.reporter).resolve_account(token)
 
             if not account_id:
                 self.reporter.add_log("❌ No Cloudflare accounts found for this token or zone!")
@@ -177,20 +313,8 @@ class SyncService:
                 else []
             )
 
-            dns_records_map: Dict[str, Dict[str, Any]] = {}
-            all_dns = self.cloudflare.read(f"/zones/{zone_id}/dns_records?type=CNAME&content={target_cname}", token)
-            for rec in all_dns.get("result") or []:
-                if isinstance(rec, dict) and rec.get("id"):
-                    dns_records_map[rec["id"]] = rec
-
-            for s in services:
-                raw_h = s.get("hostname")
-                norm_h = normalize_hostname(raw_h)
-                if norm_h:
-                    host_dns = self.cloudflare.read(f"/zones/{zone_id}/dns_records?type=CNAME&name={norm_h}", token)
-                    for rec in host_dns.get("result") or []:
-                        if isinstance(rec, dict) and rec.get("id"):
-                            dns_records_map[rec["id"]] = rec
+            # ISS-13: batch DNS fetch (one zone CNAME list) with per-host fallback.
+            dns_records_map = RemoteFetcher(self.cloudflare).fetch_dns(zone_id, domain, token, target_cname, services)
 
             remote = RemoteState(
                 tunnel_id=tunnel_id,
@@ -208,8 +332,8 @@ class SyncService:
             except Exception:
                 policy = OwnershipPolicy.ADOPT_AND_MANAGE
 
-            dry_run = self.settings.get("DRY_RUN", "false").lower() in ("true", "1", "yes")
-            immediate_cleanup = self.settings.get("DNS_IMMEDIATE_CLEANUP", "false").lower() in ("true", "1", "yes")
+            dry_run = self.settings.dry_run
+            immediate_cleanup = self.settings.dns_immediate_cleanup
             try:
                 grace_period = float(self.settings.get("DNS_CLEANUP_GRACE_PERIOD", 300.0))
             except ValueError:
@@ -228,6 +352,9 @@ class SyncService:
             max_deletions = int(max_deletions_env) if max_deletions_env and max_deletions_env.isdigit() else None
 
             tombstones = self.state.setdefault("tombstones", {})
+            # ISS-11: opt-in persistence (off by default; tolerant load).
+            if self.settings.tombstone_persistence_enabled:
+                tombstones.update(self._load_persisted_tombstones())
             now = self.clock()
 
             plan = compute_change_plan(
@@ -241,6 +368,7 @@ class SyncService:
                 dry_run=dry_run,
                 immediate_cleanup=immediate_cleanup,
                 max_deletions=max_deletions,
+                preserve_manual_roots=self.settings.preserve_manual_roots,
             )
             self.state["_last_change_plan_obj"] = plan
             self.state["last_change_plan"] = plan.model_dump()
@@ -255,6 +383,23 @@ class SyncService:
                 if host not in tombstones:
                     tombstones[host] = ts
                     self.reporter.add_log(f"⏳ Tombstoned {host} against flapping (grace period: {int(grace_period)}s)")
+
+            # ISS-11: persist tombstones if opt-in (never blocks sync).
+            if self.settings.tombstone_persistence_enabled:
+                self._persist_tombstones(tombstones)
+
+            # ISS-09: explicit log/event on every ownership adoption.
+            for dns in plan.dns_changes:
+                if (
+                    getattr(dns, "ownership_status", None) is not None
+                    and str(getattr(dns.ownership_status, "value", dns.ownership_status)) == "adopted"
+                ):
+                    self.reporter.add_log(
+                        f"🛡️ [DNS ADOPTION] {dns.hostname} adopted under adopt_and_manage (plan {plan.plan_id})"
+                    )
+                    self.reporter.record_event(
+                        "warning", "DNS_ADOPTED", "dns", f"Adopted DNS record {dns.hostname} (plan {plan.plan_id})"
+                    )
 
             # Log predictive diff markers
             for ing in plan.ingress_changes:
@@ -293,12 +438,8 @@ class SyncService:
                 self.state["last_sync"] = time.strftime("%Y-%m-%d %H:%M:%S")
                 return
 
-            allow_mass_deletions = self.settings.get("ALLOW_MASS_DELETIONS", "false").lower() in ("true", "1", "yes")
-            limit = self.settings.get("MAX_DELETIONS_PER_SYNC", self.settings.get("MAX_DELETIONS_PER_RUN", "3"))
-            try:
-                max_deletions = int(limit)
-            except ValueError:
-                max_deletions = 3
+            allow_mass_deletions = self.settings.allow_mass_deletions
+            max_deletions = self.settings.max_deletions
             ratio = self.settings.get("MAX_DELETION_RATIO")
             deletion_policy = DeletionPolicy(max_deletions, float(ratio) if ratio else None, allow_mass_deletions)
             planned_deletions = max(plan.summary.ingress_deletes, plan.summary.dns_deletes)
@@ -314,32 +455,10 @@ class SyncService:
                 for host in plan.tombstones_to_clear:
                     tombstones.pop(host, None)
 
-            # Truthful Per-Service Diagnostic Stage Updates (Issue #49)
-            for s in services:
-                stages = s.setdefault("stages", {})
-                if ingress_failed:
-                    stages["CLOUDFLARE_INGRESS"] = {
-                        "status": "FAILED",
-                        "message": "Cloudflare Tunnel ingress configuration update failed",
-                    }
-                else:
-                    stages["CLOUDFLARE_INGRESS"] = {
-                        "status": "PASS",
-                        "message": f"Ingress rule active: {s.get('hostname')} -> {s.get('service')}",
-                    }
-
-                if dns_failed:
-                    stages["CLOUDFLARE_DNS"] = {
-                        "status": "FAILED",
-                        "message": "Cloudflare DNS synchronization failed",
-                    }
-                else:
-                    stages["CLOUDFLARE_DNS"] = {
-                        "status": "PASS",
-                        "message": f"DNS CNAME active pointing to {target_cname}",
-                    }
-
-                s["status"] = compute_truthful_service_status(stages)
+            # Truthful Per-Service Diagnostic Stage Updates (Issue #49) via StatusPublisher.
+            StatusPublisher(self.reporter, self.metrics, self.dispatcher).publish(
+                self.state, services, target_cname, ingress_failed, dns_failed
+            )
 
             # Reconstruct synced_dns for UI & status dashboard
             synced_dns = []

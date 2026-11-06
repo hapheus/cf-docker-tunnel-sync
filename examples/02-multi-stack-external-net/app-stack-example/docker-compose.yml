@@ -12,7 +12,7 @@ services:
     networks:
       - internal-backend
   web:
-    image: traefik/whoami:latest
+    image: traefik/whoami:v1.10.2
     container_name: my-app-web
     restart: unless-stopped
     depends_on:

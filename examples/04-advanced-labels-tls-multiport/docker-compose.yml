@@ -1,6 +1,6 @@
 services:
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    image: cloudflare/cloudflared:2025.5.0
     container_name: cloudflared
     restart: unless-stopped
     command: tunnel --no-autoupdate run --token-file /etc/cloudflared/token
@@ -37,7 +37,7 @@ services:
       retries: 3
       start_period: 2s
   app-selfsigned-https:
-    image: traefik/whoami:latest
+    image: traefik/whoami:v1.10.2
     container_name: app-selfsigned-https
     restart: unless-stopped
     labels:
@@ -53,7 +53,7 @@ services:
     volumes:
       - ./certs:/certs:ro
   app-custom-headers:
-    image: traefik/whoami:latest
+    image: traefik/whoami:v1.10.2
     container_name: app-custom-headers
     restart: unless-stopped
     labels:
@@ -72,7 +72,7 @@ services:
     volumes:
       - ./certs:/certs:ro
   app-multi-port:
-    image: nginx:alpine
+    image: nginx:1.27-alpine
     container_name: app-multi-port
     restart: unless-stopped
     labels:

@@ -26,7 +26,8 @@ Create `docker-compose.yml`:
 ```yaml
 services:
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    # Quickstart snippet uses floating tags for brevity; see docs/release-security.md to pin by version/digest (ISS-03).
+    image: cloudflare/cloudflared:2025.5.0
     restart: unless-stopped
     command: tunnel --no-autoupdate run --token-file /etc/cloudflared/token
     volumes:
@@ -38,6 +39,7 @@ services:
         condition: service_healthy
 
   cf-tunnel-sync:
+    # NOTE: floating tag kept for quickstart brevity (ISS-03); pin by digest for repeatable deployments.
     image: hapheus/cf-tunnel-sync:latest
     restart: unless-stopped
     environment:
@@ -67,7 +69,7 @@ volumes:
   cf_token_data:
 ```
 
-This creates the gateway network and shares the generated token with the connector. No ports are published. The Docker socket is privileged even with `:ro`; see [security](docs/security.md). For repeatable deployment, replace floating tags with selected [versions or digests](docs/release-security.md).
+This creates the gateway network and shares the generated token with the connector. No ports are published. **Security (ISS-01):** the Docker socket is privileged even with `:ro`. On untrusted networks prefer the socket-proxy example (`examples/03-secure-socket-proxy`, one copy-paste step); keep the raw socket only on trusted homelabs. See [security](docs/security.md). For repeatable deployment, replace floating tags with selected [versions or digests](docs/release-security.md).
 
 Start and inspect it:
 
@@ -85,6 +87,7 @@ Create a separate directory and Compose file. Replace `whoami.example.com` with 
 ```yaml
 services:
   whoami:
+    # NOTE: floating tag kept for quickstart brevity (ISS-03); pin by digest for repeatable deployments.
     image: traefik/whoami:latest
     restart: unless-stopped
     networks:

@@ -79,6 +79,42 @@ def perform_startup_validation(exit_on_error: bool = False, settings=None):
                 sys.exit(1)
             if err is not None:
                 warnings.append(err)
+
+    # ISS-01: warn when the raw Docker socket is used without a socket proxy.
+    # Detected via env/docs hint only (never probes the daemon).
+    proxy_hint = (environment.get("DOCKER_SOCKET_PROXY") or environment.get("DOCKER_SOCKET_PROXY_ADDR") or "").strip()
+    if not proxy_hint:
+        logger.warning(
+            "Security note (ISS-01): raw Docker socket (/var/run/docker.sock) is mounted. "
+            "For untrusted networks, prefer the socket-proxy example "
+            "(examples/03-secure-socket-proxy) — see docs/security.md. "
+            "Set DOCKER_SOCKET_PROXY=1 to acknowledge."
+        )
+
+    # ISS-02 / ISS-04: warn when dashboard is enabled without auth and/or non-loopback bind.
+    dashboard_enabled = (environment.get("DASHBOARD_ENABLED") or "true").strip().lower() not in (
+        "false",
+        "0",
+        "no",
+        "disabled",
+        "off",
+    )
+    user = (environment.get("DASHBOARD_USERNAME") or environment.get("BASIC_AUTH_USERNAME") or "").strip()
+    pwd = (environment.get("DASHBOARD_PASSWORD") or environment.get("BASIC_AUTH_PASSWORD") or "").strip()
+    bind = (environment.get("DASHBOARD_BIND_ADDRESS") or "0.0.0.0").strip()
+    if dashboard_enabled and not user and not pwd:
+        logger.warning(
+            "Security note (ISS-02): dashboard is enabled without credentials; "
+            "set DASHBOARD_USERNAME/DASHBOARD_PASSWORD or enable opt-in strict mode "
+            "DASHBOARD_AUTH_REQUIRED=true. Do not expose /api/status or /api/sync on WAN without auth/TLS."
+        )
+    if dashboard_enabled and bind not in ("127.0.0.1", "localhost", "::1") and (not user or not pwd):
+        logger.warning(
+            "Security note (ISS-04): dashboard bound to non-loopback %s without auth. "
+            "For WAN hosts use DASHBOARD_BIND_ADDRESS=127.0.0.1 behind TLS/reverse proxy, "
+            "or the headless example without published ports.",
+            bind,
+        )
     return warnings
 
 

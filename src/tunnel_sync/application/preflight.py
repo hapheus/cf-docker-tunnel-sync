@@ -186,6 +186,29 @@ class PreflightService:
             logger.info(
                 f"✅ [PREFLIGHT PASS] Inspected Docker containers ({len(all_containers)} total containers, {len(services)} tunneled services)."
             )
+            # ISS-08 (read-only): list manual root routes that would be managed.
+            # We can only use locally visible ingress if a prior sync state exists;
+            # otherwise discovery results are reported without mutation.
+            try:
+                local = getattr(self.discovery, "state", None)
+                existing_ingress = (local or {}).get("_last_ingress", []) if isinstance(local, dict) else []
+                discovered_hosts = {s.get("hostname") for s in services if isinstance(s, dict) and s.get("hostname")}
+                manual_roots = [
+                    str(r.get("hostname"))
+                    for r in existing_ingress
+                    if isinstance(r, dict) and r.get("hostname") and not r.get("path")
+                ]
+                if manual_roots:
+                    logger.info(
+                        "⚠️ [PREFLIGHT INFO] Existing ingress root routes (may include manual routes): %s. "
+                        "Set PRESERVE_MANUAL_ROOTS=true to keep manual roots (opt-in, off by default).",
+                        ", ".join(sorted(set(manual_roots))),
+                    )
+                else:
+                    logger.info("ℹ️ [PREFLIGHT INFO] No existing manual root routes detected in local state.")
+                _ = discovered_hosts
+            except Exception:
+                logger.debug("Preflight manual-root listing skipped", exc_info=False)
         except Exception as e:
             safe_msg = mask_sensitive_text(str(e), [token] if token else None)
             logger.warning(f"⚠️ [PREFLIGHT WARN] Network inspection encountered an issue: {safe_msg}")

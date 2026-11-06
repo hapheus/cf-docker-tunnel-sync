@@ -1,6 +1,6 @@
 services:
   docker-socket-proxy:
-    image: tecnativa/docker-socket-proxy:latest
+    image: tecnativa/docker-socket-proxy:0.2.0
     container_name: docker-socket-proxy
     restart: unless-stopped
     environment:
@@ -19,7 +19,7 @@ services:
     networks:
       - socket-proxy-net
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    image: cloudflare/cloudflared:2025.5.0
     container_name: cloudflared
     restart: unless-stopped
     command: tunnel --no-autoupdate run --token-file /etc/cloudflared/token
@@ -59,7 +59,7 @@ services:
       retries: 3
       start_period: 2s
   whoami:
-    image: traefik/whoami:latest
+    image: traefik/whoami:v1.10.2
     container_name: whoami-secured
     restart: unless-stopped
     labels:

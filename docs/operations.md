@@ -106,3 +106,7 @@ If a deletion guard trips, restore unexpectedly missing services first. Use `ALL
 5. Remove the token volume and shared network only after confirming no other stack uses them. `docker compose down -v` deletes this stack's named volumes, so it is an intentional final cleanup rather than the default first step.
 
 For upgrades and rollback, see [compatibility](COMPATIBILITY.md).
+
+## Shutdown and heartbeat (ISS-14)
+
+`Scheduler.close(timeout=45.0)` (default unchanged) is idempotent. Python cannot forcibly kill blocked worker threads; the Docker events thread + `to_thread(run_once)` may overrun, after which the container may be killed mid-sync (token file write is atomic). For long syncs enable opt-in heartbeat: `SYNC_HEARTBEAT_ENABLED=true`.

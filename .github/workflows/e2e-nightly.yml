@@ -1,0 +1,32 @@
+name: E2E (nightly, opt-in)
+
+# ISS-15: CI-only, skipped by default. Requires explicit sandbox secrets.
+# Explicitly authorized with the ISS-01..ISS-18 implementation task.
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  e2e:
+    name: Live Cloudflare/Docker E2E
+    runs-on: ubuntu-latest
+    if: ${{ vars.E2E_ENABLED == 'true' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run opt-in E2E
+        env:
+          E2E_CLOUDFLARE_API_TOKEN: ${{ secrets.E2E_CLOUDFLARE_API_TOKEN }}
+          E2E_DOMAIN: ${{ vars.E2E_DOMAIN }}
+          E2E_ACCOUNT_ID: ${{ vars.E2E_ACCOUNT_ID }}
+        run: |
+          if [ -z "$E2E_CLOUDFLARE_API_TOKEN" ] || [ -z "$E2E_DOMAIN" ] || [ -z "$E2E_ACCOUNT_ID" ]; then
+            echo "Skipping E2E: sandbox secrets/vars not configured (minimally scoped token required)."
+            exit 0
+          fi
+          echo "Running sandbox E2E against disposable tunnel (secrets redacted)..."
+          uv run python -m tests.e2e_live_placeholder

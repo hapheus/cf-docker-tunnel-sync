@@ -1,6 +1,6 @@
 services:
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    image: cloudflare/cloudflared:2025.5.0
     restart: always
     command: tunnel --no-autoupdate --protocol ${CLOUDFLARED_PROTOCOL:-auto} run --token-file /etc/cloudflared/token
     volumes:
@@ -11,6 +11,8 @@ services:
       - "host.docker.internal:host-gateway"
 
   cf-tunnel-sync:
+    # NOTE: shipped sync image tag scheme is intentionally unchanged (see ISS-03).
+    # Examples pin cloudflared/whoami/nginx by version; pin this tag by digest for repeatable deployments.
     image: hapheus/cf-tunnel-sync:latest
     build:
       context: .
@@ -23,15 +25,23 @@ services:
       - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-}
       - CLOUDFLARED_CONTAINER_NAME=${CLOUDFLARED_CONTAINER_NAME:-}
       - DASHBOARD_AUTH_ENABLED=${DASHBOARD_AUTH_ENABLED:-true}
+      # ISS-02 opt-in strict mode (off by default; fails closed when enabled without credentials):
+      - DASHBOARD_AUTH_REQUIRED=${DASHBOARD_AUTH_REQUIRED:-false}
       - DASHBOARD_USERNAME=${DASHBOARD_USERNAME:-${BASIC_AUTH_USERNAME:-}}
       - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-${BASIC_AUTH_PASSWORD:-}}
       - BASIC_AUTH_USERNAME=${BASIC_AUTH_USERNAME:-}
       - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-}
       - SYNC_FALLBACK_INTERVAL=${SYNC_FALLBACK_INTERVAL:-900}
+      # ISS-01: set DOCKER_SOCKET_PROXY=1 when using examples/03-secure-socket-proxy.
+      - DOCKER_SOCKET_PROXY=${DOCKER_SOCKET_PROXY:-}
     volumes:
+      # ISS-01: raw socket = host-root authority. For untrusted networks prefer
+      # examples/03-secure-socket-proxy (one copy-paste step); keep raw socket only on trusted homelabs.
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - cf_token_data:/etc/cloudflared
     ports:
+      # ISS-04: default stays 0.0.0.0 for compatibility. On WAN hosts use
+      # DASHBOARD_BIND_ADDRESS=127.0.0.1 and TLS/reverse proxy, or the headless example without published ports.
       - "${DASHBOARD_BIND_ADDRESS:-0.0.0.0}:${DASHBOARD_PORT:-8080}:8090"
     networks:
       - cf-tunnel-net
@@ -67,7 +77,7 @@ services:
 
   # Example Service (uncomment to test)
   # web-example:
-  #   image: nginx:alpine
+  #   image: nginx:1.27-alpine
   #   labels:
   #     - "cf.tunnel.hostname=hello.${DOMAIN_NAME}"
   #     - "cf.tunnel.port=80"

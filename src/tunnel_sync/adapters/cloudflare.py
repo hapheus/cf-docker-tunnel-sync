@@ -90,9 +90,13 @@ class CloudflareClient:
                                 )
                                 raise RuntimeError(f"Cloudflare API Error ({resp.status_code}): {err_text}") from None
                         except Exception:
-                            # Response is not valid JSON or lacks error structure; fall back to raw HTTP error
-                            pass
-                        raise RuntimeError(f"Cloudflare HTTP {resp.status_code}: {resp.text}") from None
+                            # Response is not valid JSON or lacks error structure; fall back to redacted HTTP error.
+                            logger.debug("Cloudflare error response not JSON; using status code only", exc_info=False)
+                        from tunnel_sync.security import redact_sensitive_string
+
+                        raise RuntimeError(
+                            f"Cloudflare HTTP {resp.status_code}: {redact_sensitive_string(resp.text)}"
+                        ) from None
 
                     return resp.json()
                 except (httpx.TimeoutException, httpx.NetworkError) as e:
