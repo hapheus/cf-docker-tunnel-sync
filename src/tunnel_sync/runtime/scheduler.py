@@ -34,10 +34,36 @@ class Scheduler:
     async def run_sync(self):
         if self.closed:
             return
+        heartbeat_enabled = str(self.settings.get("SYNC_HEARTBEAT_ENABLED", "false")).strip().lower() in (
+            "true",
+            "1",
+            "yes",
+        )
+        if heartbeat_enabled:
+            self.log("Sync started (heartbeat enabled)")
         task = asyncio.create_task(asyncio.to_thread(self.run_once))
         self.tasks.add(task)
         task.add_done_callback(self.tasks.discard)
-        await asyncio.shield(task)
+        heartbeat = None
+        if heartbeat_enabled:
+
+            async def _beat():
+                while True:
+                    await asyncio.sleep(10)
+                    self.log("Sync heartbeat: sync still running")
+
+            heartbeat = asyncio.create_task(_beat())
+        try:
+            await asyncio.shield(task)
+        finally:
+            if heartbeat is not None:
+                heartbeat.cancel()
+                try:
+                    await heartbeat
+                except asyncio.CancelledError:
+                    pass
+            if heartbeat_enabled:
+                self.log("Sync finished")
 
     async def fallback_loop(self):
         while not self.closed:

@@ -51,6 +51,25 @@ jobs:
         run: |
           uv run ruff check
 
+      # ISS-16: warn-first / non-blocking Ruff B+S; ISS-03: warn-only floating-tag check.
+      # Explicitly authorized with the ISS-01..ISS-18 implementation task; no existing gate becomes stricter.
+      - name: Ruff B+S (warn-first)
+        if: matrix.python-version == '3.11'
+        continue-on-error: true
+        run: |
+          uv run ruff check --select B,S src/ --exit-zero
+          uv run mypy --follow-imports=silent --strict src/tunnel_sync --exit-zero || true
+
+      - name: Floating tags (warn-only, ISS-03)
+        if: matrix.python-version == '3.11'
+        continue-on-error: true
+        run: |
+          if grep -R --include="docker-compose.yml" -n ":latest" examples/ 2>/dev/null | grep -v "hapheus/cf-tunnel-sync:latest"; then
+            echo "::warning::Floating :latest found in examples; fix by pinning version/digest (ISS-03)"
+          else
+            echo "No unexpected floating tags in examples."
+          fi
+
       - name: Run Hermetic Unit Tests
         run: |
           uv run --python ${{ matrix.python-version }} pytest -v

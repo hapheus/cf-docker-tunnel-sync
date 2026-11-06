@@ -32,6 +32,7 @@ def compute_change_plan(
     immediate_cleanup: bool = False,
     max_deletions: Optional[int] = None,
     tag_prefix: str = "cf-tunnel-sync:",
+    preserve_manual_roots: bool = False,
 ) -> ChangePlan:
     """Compute a plan from explicit snapshots, policies, time, and identity."""
     snapshot = snapshot.model_copy(deep=True)
@@ -58,6 +59,9 @@ def compute_change_plan(
         host = rule.get("hostname")
         if host and not rule.get("path"):
             existing_ingress_by_host.setdefault(host, rule)
+    existing_dns_by_name_early: Dict[str, Dict[str, Any]] = {
+        str(rec["name"]): rec for rec in remote.existing_dns_records if rec.get("name")
+    }
 
     ingress_changes: List[PlannedIngressChange] = []
     tombstones_to_set: Dict[str, float] = {}
@@ -70,6 +74,36 @@ def compute_change_plan(
         rule = {"hostname": host, "service": origin.service_target}
         if origin.origin_request:
             rule["originRequest"] = origin.origin_request
+
+        # ISS-08 opt-in: preserve manual root routes (off by default; default output unchanged).
+        if preserve_manual_roots and host in existing_ingress_by_host:
+            dns_rec = existing_dns_by_name_early.get(host)
+            dns_status = tagger.parse_status(dns_rec, target_cname, is_active_local=False) if dns_rec else None
+            if dns_rec is not None and dns_status != OwnershipStatus.OWNED:
+                existing_rule = existing_ingress_by_host[host]
+                ingress_changes.append(
+                    PlannedIngressChange(
+                        action=IngressActionType.NOOP,
+                        hostname=host,
+                        service=existing_rule.get("service", ""),
+                        origin_request=existing_rule.get("originRequest"),
+                        reason="PRESERVE_MANUAL_ROOTS: manual root route preserved",
+                    )
+                )
+                final_ingress_origins.append(
+                    {
+                        "hostname": host,
+                        "service": existing_rule.get("service", ""),
+                        **(
+                            {"originRequest": existing_rule["originRequest"]}
+                            if existing_rule.get("originRequest")
+                            else {}
+                        ),
+                    }
+                )
+                if host in tombstones:
+                    tombstones_to_clear.append(host)
+                continue
 
         if host in existing_ingress_by_host:
             existing_rule = existing_ingress_by_host[host]

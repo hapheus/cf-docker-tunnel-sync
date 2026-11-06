@@ -1,6 +1,7 @@
 """Pure hostname, ingress, and network plausibility transformations."""
 
 import ipaddress
+import logging
 import re
 import urllib.parse
 from typing import List, Optional, Set
@@ -120,7 +121,7 @@ def evaluate_origin_network_plausibility(
                 )
         except ValueError:
             # target_host is not an IP address (e.g. hostname/FQDN)
-            pass
+            logging.getLogger(__name__).debug("Target host is not an IP address", exc_info=False)
 
         if "." in target_host and not target_host.endswith(".internal") and not target_host.endswith(".local"):
             return NetworkPlausibilityResult(

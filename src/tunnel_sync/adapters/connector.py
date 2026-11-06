@@ -14,9 +14,21 @@ class FileTokenStore:
             return handle.read().strip()
 
     def write(self, token: str) -> None:
-        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        parent = os.path.dirname(self.path)
+        os.makedirs(parent, exist_ok=True)
+        # ISS-05 (best-effort, non-breaking): tighten permissions. Never fail sync on chmod errors.
+        for target, mode in ((parent, 0o700), (self.path, 0o600)):
+            try:
+                if target == parent or os.path.exists(target):
+                    os.chmod(target, mode)
+            except OSError:
+                pass
         with open(self.path, "w", encoding="utf-8") as handle:
             handle.write(token)
+        try:
+            os.chmod(self.path, 0o600)
+        except OSError:
+            pass
 
 
 class DockerConnectorRestarter:

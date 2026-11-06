@@ -117,3 +117,7 @@ New implementation belongs in the package, with tests in the corresponding test 
 The planner receives time and plan identity as inputs and copies mutable snapshots. Its result can be compared without starting a web server or touching a provider. Reader and writer capabilities are separate; previews and preflight receive no Cloudflare writer or connector restarter. Both historical execution helpers and live sync delegate to one executor; the historical helper retains fail-fast errors, while live sync collects partial failures.
 
 Working state and published snapshots use separate locks. Status endpoints read detached snapshots without waiting for provider I/O. The scheduler keeps sync work off the event loop and owns the listener thread and scheduled tasks. See [contributing](../CONTRIBUTING.md) for isolated test and package checks.
+
+## Legacy compatibility (ISS-12)
+
+Historical root-level shims (`src/*.py`) and `src/tunnel_sync/compat/` are frozen and fully supported. Imports of legacy modules emit `DeprecationWarning` pointing to canonical `tunnel_sync.*` paths. Do not add new code to `compat/`. Security fixes must land in both canonical and compat paths. Removal would require a separate major-version decision.

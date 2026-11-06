@@ -112,8 +112,7 @@ class Reporter:
             try:
                 self.state["alert_status"] = self.dispatcher.get_status()
             except Exception:
-                # Dispatcher status is optional telemetry; fallback gracefully if unavailable
-                pass
+                logging.getLogger(__name__).debug("Dispatcher status unavailable; continuing", exc_info=False)
 
             self.state["overview_metrics"] = {
                 "active_services": active,

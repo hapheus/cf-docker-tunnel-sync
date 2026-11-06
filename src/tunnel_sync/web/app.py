@@ -1,5 +1,6 @@
 """HTTP presentation and authentication over injected application container."""
 
+import logging
 import os
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -177,8 +178,7 @@ def create_http_app(container, *, settings_provider=None):
         try:
             sync_state["alert_status"] = container.dispatcher.get_status()
         except Exception:
-            # Fallback gracefully if notification dispatcher status is not available
-            pass
+            logging.getLogger(__name__).debug("Dispatcher status unavailable; continuing", exc_info=False)
         return JSONResponse(sync_state.get("alert_status", {}))
 
     @app.get("/metrics", response_class=PlainTextResponse)

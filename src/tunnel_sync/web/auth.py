@@ -57,13 +57,24 @@ def create_auth(get_settings):
         pwd = _resolve_credential(settings, "DASHBOARD_PASSWORD", "BASIC_AUTH_PASSWORD")
         auth_enabled_env = settings.get("DASHBOARD_AUTH_ENABLED", "").strip().lower()
 
-        if auth_enabled_env in ("false", "0", "no"):
+        auth_disabled = auth_enabled_env in ("false", "0", "no")
+        auth_required = (settings.get("DASHBOARD_AUTH_REQUIRED", "false") or "false").strip().lower() in (
+            "true",
+            "1",
+            "yes",
+        )
+
+        if auth_disabled and not auth_required:
             return True
 
         auth_explicitly_enabled = auth_enabled_env in ("true", "1", "yes")
 
-        if not auth_explicitly_enabled and not user and not pwd:
-            return True
+        if (auth_disabled or not auth_explicitly_enabled) and not user and not pwd:
+            if auth_required:
+                # Opt-in strict mode (ISS-02): fail closed when credentials are missing.
+                return _verify_basic_credentials(credentials, user, pwd, realm="Cloudflare Tunnel Sync Dashboard")
+            if not auth_explicitly_enabled:
+                return True
 
         return _verify_basic_credentials(credentials, user, pwd, realm="Cloudflare Tunnel Sync Dashboard")
 

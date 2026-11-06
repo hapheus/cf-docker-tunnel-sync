@@ -69,6 +69,9 @@ class ChangeExecutor:
         self.writer, self.token_store, self.restarter = writer, token_store, restarter
         self.log = log
         self.record = record or (lambda result: None)
+        # ISS-10: track "token written, restart pending" so a failed restart is retried next cycle.
+        self._pending_token: str | None = None
+        self._pending_connector: Callable[[], str] | None = None
 
     def provision(self, account_id: str, name: str, token: str, *, dry_run: bool) -> str | None:
         if dry_run:
@@ -90,18 +93,26 @@ class ChangeExecutor:
                 old_token = self.token_store.read()
             except OSError:
                 old_token = ""
-            if old_token == tunnel_token:
+            if old_token == tunnel_token and self._pending_token != tunnel_token:
                 return
-            self.token_store.write(tunnel_token)
-            self.log("🔑 Updated Cloudflare Tunnel Token in shared volume")
+            if old_token != tunnel_token:
+                self.token_store.write(tunnel_token)
+                self.log("🔑 Updated Cloudflare Tunnel Token in shared volume")
             try:
                 name = connector()
                 self.restarter.restart(name)
+                self._pending_token = None
+                self._pending_connector = None
                 self.log(f"🔄 Triggered restart for cloudflared container ({name})")
             except Exception as error:
-                self.log(f"Notice restarting cloudflared: {error}")
-        except Exception as error:
-            self.log(f"Notice writing tunnel token: {error}")
+                # ISS-10: remember pending restart for next cycle. Never log the token itself.
+                self._pending_token = tunnel_token
+                self._pending_connector = connector
+                self.log(f"Notice restarting cloudflared (will retry next sync): {type(error).__name__}")
+        except Exception:
+            # Never log raw token material.
+            if self._pending_token is None:
+                self.log("Notice writing tunnel token: write failed")
 
     def execute(
         self,
