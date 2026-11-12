@@ -76,11 +76,14 @@ networks:
     external: true
 ```
 
+> [!NOTE]
+> Service discovery is driven directly by `cf.tunnel.hostname` and `cf.tunnel.port`; an explicit `cf.tunnel.enable` label is not required to opt in.
+
 No host port forwarding (e.g. `80:80` or `443:443`) is required. Traffic flows securely through Cloudflare's edge into the container.
 
 ---
 
-## Core Environment Variables
+## Configuration Reference
 
 | Variable | Required | Default | Description |
 | --- | :---: | :---: | --- |
@@ -91,7 +94,11 @@ No host port forwarding (e.g. `80:80` or `443:443`) is required. Traffic flows s
 | `CF_NETWORK_NAME` | No | `cf-tunnel-net` | Docker network name shared with the `cloudflared` connector. |
 | `SYNC_FALLBACK_INTERVAL` | No | `900` | Fallback reconciliation interval in seconds (Docker events trigger instant syncs). |
 | `MAX_DELETIONS_PER_SYNC`| No | `3` | Safety limit: prevents accidental mass deletion during sync cycles. |
+| `ALLOW_MASS_DELETIONS` | No | `false` | Explicitly overrides `MAX_DELETIONS_PER_SYNC` when bulk deletion is intentional. |
 | `DRY_RUN` | No | `false` | When `true`, logs planned changes without mutating Cloudflare API resources. |
+| `PREFLIGHT_ONLY` | No | `false` | When `true`, runs preflight resource inspection and exits immediately. |
+| `LOG_FORMAT` | No | `text` | Logging output format: `text` or `json` (for structured logging). |
+| `NOTIFICATION_WEBHOOK_URL`| No | — | Optional webhook URL for Discord/Slack/generic sync notifications and alerts. |
 | `DASHBOARD_ENABLED` | No | `false` | Enables the embedded status UI on internal port 8090. |
 
 ---
@@ -102,6 +109,7 @@ No host port forwarding (e.g. `80:80` or `443:443`) is required. Traffic flows s
   ```bash
   docker compose exec cf-tunnel-sync python app.py --preflight
   ```
+  (Alternatively set `PREFLIGHT_ONLY=true`).
 - **Scoped API Tokens:** Never use a Global API Key. Use a token scoped to `Account: Cloudflare Tunnel: Edit` and `Zone: DNS: Edit`. See [Permissions Guide](https://github.com/hapheus/cf-docker-tunnel-sync/blob/main/docs/cloudflare-permissions.md).
 - **Socket Security:** The Docker socket mount (`/var/run/docker.sock`) grants root-equivalent host access. On untrusted environments, use the [Docker Socket Proxy example](https://github.com/hapheus/cf-docker-tunnel-sync/tree/main/examples/03-secure-socket-proxy).
 - **Access Labels:** Labels like `cf.tunnel.access` display metadata in the UI only; they do not configure Cloudflare Access authorization policies.
