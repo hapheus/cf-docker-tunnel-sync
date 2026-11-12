@@ -1,33 +1,55 @@
-# Documentation
+# Documentation Index
 
-`cf-docker-tunnel-sync` connects Docker services to Cloudflare Tunnel by reading container labels and updating ingress rules and DNS. The `cloudflared` connector carries application traffic; the synchronizer manages configuration.
+`cf-docker-tunnel-sync` manages Cloudflare Tunnel ingress rules and DNS CNAME records automatically based on Docker container labels. The `cloudflared` connector carries encrypted tunnel traffic; `cf-tunnel-sync` handles the configuration lifecycle.
 
-## Get started
+Use this index to find guides, configuration references, and operational documentation.
 
-- [Quickstart](../QUICKSTART.md): set up a gateway and a demo service.
-- [Expose an existing service](onboarding.md): add an application to an existing gateway.
-- [Cloudflare API token](cloudflare-permissions.md): create a scoped token.
-- [Deployment examples](../examples/): single-stack, separate stacks, socket proxy, and multiple gateways.
+---
 
-## Configure
+## 🚀 Getting Started
 
-- [Environment variables](configuration.md): defaults, precedence, and deployment settings.
-- [Container labels](labels.md): hostnames, ports, protocols, and origin TLS settings.
-- [Docker networking](networking-guide.md): shared networks and the request path.
+Step-by-step guides for installing and exposing your first applications:
 
-## Operate
+- **[Quickstart Guide](../QUICKSTART.md):** Minimal 60-second walkthrough with Docker Compose and demo service (`whoami`).
+- **[Onboarding Existing Services](onboarding.md):** How to attach existing Docker services to the tunnel network and label them.
+- **[Cloudflare Token Permissions](cloudflare-permissions.md):** How to create a least-privilege Cloudflare API token.
+- **[Deployment Examples](../examples/):**
+  - [01 Single Stack](../examples/01-quickstart-single-stack/README.md): Gateway, connector, and demo in one Compose file.
+  - [02 Multi-Stack](../examples/02-multi-stack-external-net/README.md): Central gateway with separate application stacks.
+  - [03 Docker Socket Proxy](../examples/03-secure-socket-proxy/README.md): Hardened setup isolating the Docker daemon socket.
+  - [04 Advanced Labels & TLS](../examples/04-advanced-labels-tls-multiport/README.md): Custom headers, HTTPS origins, and multi-port containers.
+  - [05 Multi-Account / Multi-Gateway](../examples/05-multi-account/README.md): Running multiple gateways with separate domains.
 
-- [Operations](operations.md): status, logs, metrics, recovery, and removal.
-- [Troubleshooting](troubleshooting.md): DNS, unreachable services, authentication, and safety guards.
-- [Upgrade and rollback](COMPATIBILITY.md): update an existing deployment.
-- [Container releases](release-security.md): image tags, digests, and artifact verification.
+---
 
-## Understand and integrate
+## ⚙️ Configuration & Networking
 
-- [HTTP API](api.md): endpoints, authentication, and response formats.
-- [Architecture and safety](architecture-and-safety.md): reconciliation, ownership, and current limitations.
-- [Security](security.md): Docker socket access, credentials, and exposure.
-- [Support and prerequisites](support-matrix.md): build targets and operational boundaries.
-- [Product scope](product-boundaries.md): what the project manages.
+Comprehensive references for environment variables, container labels, and Docker networks:
 
-These pages describe the current implementation. In particular, Access labels are metadata rather than access controls, and dry-run performs no external writes, including tunnel initialization. Read the [current safety limitations](architecture-and-safety.md#current-limitations) before attaching an existing tunnel.
+- **[Environment Variables](configuration.md):** Complete variable reference, defaults, precedence, and optional features.
+- **[Container Labels Reference](labels.md):** Hostname, port selection, origin TLS options, and metadata labels.
+- **[Label Quick Reference](label-reference.md):** Compact cheat sheet of supported `cf.tunnel.*` labels.
+- **[Docker Networking Guide](networking-guide.md):** How the shared bridge network routes traffic from `cloudflared` to application containers.
+
+---
+
+## 🛠️ Operations & Troubleshooting
+
+Monitoring, maintenance, and day-2 operations:
+
+- **[Operations Guide](operations.md):** Status checks, structured logs, Prometheus metrics (`/metrics`), and webhook alerts.
+- **[Troubleshooting & FAQ](troubleshooting.md):** Diagnostic commands, DNS resolution checks, error codes, and common pitfalls.
+- **[Compatibility & Upgrades](COMPATIBILITY.md):** Versioning guarantees, upgrade instructions, and rollback procedures.
+- **[Release Security & Pinning](release-security.md):** Verifying image signatures, SLSA provenance, and digest pinning (ISS-03).
+
+---
+
+## 🔒 Security & Architecture
+
+Deep dives into the internal mechanics and safety boundaries:
+
+- **[Architecture & Safety Limits](architecture-and-safety.md):** Reconciliation loop, event debouncing, deletion limits, and [current limitations](architecture-and-safety.md#current-limitations).
+- **[Security Model](security.md):** Threat model, Docker socket privileges, credential storage, and network isolation.
+- **[Product Boundaries](product-boundaries.md):** Explicit list of what the project does and does NOT support.
+- **[Support Matrix](support-matrix.md):** Supported Docker versions, Python runtimes, architectures, and Cloudflare features.
+- **[HTTP API Reference](api.md):** Internal REST API endpoints (`/api/status`, `/api/health`, `/metrics`, `/api/sync`).
