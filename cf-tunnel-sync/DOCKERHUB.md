@@ -1,35 +1,125 @@
-# Cloudflare Tunnel Docker synchronizer
+# Cloudflare Tunnel Docker Synchronizer (`hapheus/cf-tunnel-sync`)
 
-`hapheus/cf-tunnel-sync` reads Docker labels and manages Cloudflare Tunnel ingress and CNAME records. Run it alongside `cloudflared`, which carries application traffic. The embedded dashboard is optional; headless deployments still run the internal API without publishing a host port.
+Automate Cloudflare Tunnel ingress routing and DNS CNAME records directly from Docker container labels.
 
-Follow the complete [QUICKSTART.md](https://github.com/hapheus/cf-docker-tunnel-sync/blob/main/QUICKSTART.md) for the gateway Compose file. Both services must mount the same token volume at `/etc/cloudflared`; the connector runs with `--token-file /etc/cloudflared/token`. Do not supply a manually copied connector token as a substitute for that setup.
+The synchronizer acts as the **control plane** (managing configuration via the Cloudflare API), while the official [`cloudflare/cloudflared`](https://hub.docker.com/r/cloudflare/cloudflared) container acts as the **data plane** (routing encrypted tunnel traffic to your Docker network).
 
-## Application labels
+---
 
-Attach your service to the connector's Docker network and use a single fully qualified hostname and explicit internal port:
+## Quick Start with Docker Compose
+
+Run `cf-tunnel-sync` alongside `cloudflared`. Both containers share a dedicated Docker bridge network and a lightweight token volume (`cf_token_data`).
 
 ```yaml
-labels:
-  cf.tunnel.hostname: app.example.com
-  cf.tunnel.port: "8080"
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:2025.5.0
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token-file /etc/cloudflared/token
+    volumes:
+      - cf_token_data:/etc/cloudflared
+    networks:
+      - cf-tunnel-net
+    depends_on:
+      cf-tunnel-sync:
+        condition: service_healthy
+
+  cf-tunnel-sync:
+    image: hapheus/cf-tunnel-sync:latest
+    restart: unless-stopped
+    environment:
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN}
+      CLOUDFLARE_TUNNEL_NAME: ${CLOUDFLARE_TUNNEL_NAME:-homelab-tunnel}
+      DOMAIN_NAME: ${DOMAIN_NAME}
+      CF_NETWORK_NAME: cf-tunnel-net
+      DASHBOARD_ENABLED: "false"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - cf_token_data:/etc/cloudflared
+    networks:
+      - cf-tunnel-net
+    healthcheck:
+      test: ["CMD", "python", "healthcheck.py"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+networks:
+  cf-tunnel-net:
+    name: cf-tunnel-net
+    driver: bridge
+
+volumes:
+  cf_token_data:
 ```
 
-Current discovery does not use `cf.tunnel.enable` to opt in or out. Path labels are not wired into normal routing, and Access labels are metadata rather than access controls. Use the maintained [label reference](https://github.com/hapheus/cf-docker-tunnel-sync/blob/main/docs/labels.md) for actual spellings and behavior.
+---
 
-## Configuration
+## Exposing Applications
 
-Set `CLOUDFLARE_API_TOKEN`, `DOMAIN_NAME`, and a dedicated `CLOUDFLARE_TUNNEL_NAME`. Account selection is normally derived from the zone. The fallback sync interval is 900 seconds; Docker events trigger earlier runs.
+Attach your application container to `cf-tunnel-net` and specify the hostname and internal container port:
 
-`MAX_DELETIONS_PER_SYNC` defaults to three and `ALLOW_MASS_DELETIONS` overrides execution deletion limits. `LOG_FORMAT=json` enables structured logs; `NOTIFICATION_WEBHOOK_URL` enables alert delivery. Pass these into the container explicitly; a Compose `.env` entry alone is not automatically injected.
+```yaml
+services:
+  my-app:
+    image: nginx:alpine
+    restart: unless-stopped
+    networks:
+      - cf-tunnel-net
+    labels:
+      cf.tunnel.hostname: app.example.com
+      cf.tunnel.port: "80"
 
-For read-only inspection, run `python app.py --preflight` or set `PREFLIGHT_ONLY=true`. It reads configured Docker and Cloudflare resources and exits. `DRY_RUN=true` also blocks tunnel creation, token-file writes, connector restarts, and ingress/DNS mutations. If the tunnel is missing, it reports that provisioning is required.
+networks:
+  cf-tunnel-net:
+    external: true
+```
 
-The [configuration reference](https://github.com/hapheus/cf-docker-tunnel-sync/blob/main/docs/configuration.md) distinguishes active settings from names only recognized by validation or other entry points.
+> [!NOTE]
+> Service discovery is driven directly by `cf.tunnel.hostname` and `cf.tunnel.port`; an explicit `cf.tunnel.enable` label is not required to opt in.
 
-## Status and safety
+No host port forwarding (e.g. `80:80` or `443:443`) is required. Traffic flows securely through Cloudflare's edge into the container.
 
-The internal HTTP port is 8090. Keep it private unless deliberately publishing it with authentication. The embedded dashboard and optional [`hapheus/cf-tunnel-dashboard`](https://hub.docker.com/r/hapheus/cf-tunnel-dashboard) use the documented API.
+---
 
-Use a scoped Cloudflare token and treat Docker socket access as privileged even with a `:ro` mount. Manual ingress rules and absent DNS ownership fields have [known safety limitations](https://github.com/hapheus/cf-docker-tunnel-sync/blob/main/docs/architecture-and-safety.md#current-limitations). Use a dedicated tunnel rather than assuming existing routing is preserved losslessly.
+## Configuration Reference
 
-[Documentation](https://github.com/hapheus/cf-docker-tunnel-sync/blob/main/docs/README.md) · [Operations](https://github.com/hapheus/cf-docker-tunnel-sync/blob/main/docs/operations.md) · [Source and issues](https://github.com/hapheus/cf-docker-tunnel-sync)
+| Variable | Required | Default | Description |
+| --- | :---: | :---: | --- |
+| `CLOUDFLARE_API_TOKEN` | **Yes** | — | Scoped Cloudflare API token with Zone DNS and Account Tunnel edit permissions. |
+| `DOMAIN_NAME` | **Yes** | — | Your registered domain zone (e.g., `example.com`). |
+| `CLOUDFLARE_TUNNEL_NAME` | **Yes** | — | Dedicated tunnel name (created automatically if missing). |
+| `CLOUDFLARE_ACCOUNT_ID` | No | Auto-detected | Cloudflare Account ID (inferred from domain zone when omitted). |
+| `CF_NETWORK_NAME` | No | `cf-tunnel-net` | Docker network name shared with the `cloudflared` connector. |
+| `SYNC_FALLBACK_INTERVAL` | No | `900` | Fallback reconciliation interval in seconds (Docker events trigger instant syncs). |
+| `MAX_DELETIONS_PER_SYNC`| No | `3` | Safety limit: prevents accidental mass deletion during sync cycles. |
+| `ALLOW_MASS_DELETIONS` | No | `false` | Explicitly overrides `MAX_DELETIONS_PER_SYNC` when bulk deletion is intentional. |
+| `DRY_RUN` | No | `false` | When `true`, logs planned changes without mutating Cloudflare API resources. |
+| `PREFLIGHT_ONLY` | No | `false` | When `true`, runs preflight resource inspection and exits immediately. |
+| `LOG_FORMAT` | No | `text` | Logging output format: `text` or `json` (for structured logging). |
+| `NOTIFICATION_WEBHOOK_URL`| No | — | Optional webhook URL for Discord/Slack/generic sync notifications and alerts. |
+| `DASHBOARD_ENABLED` | No | `false` | Enables the embedded status UI on internal port 8090. |
+
+---
+
+## Safety & Operational Notes
+
+- **Preflight Inspection:** Run non-mutating checks without changing live resources:
+  ```bash
+  docker compose exec cf-tunnel-sync python app.py --preflight
+  ```
+  (Alternatively set `PREFLIGHT_ONLY=true`).
+- **Scoped API Tokens:** Never use a Global API Key. Use a token scoped to `Account: Cloudflare Tunnel: Edit` and `Zone: DNS: Edit`. See [Permissions Guide](https://github.com/hapheus/cf-docker-tunnel-sync/blob/main/docs/cloudflare-permissions.md).
+- **Socket Security:** The Docker socket mount (`/var/run/docker.sock`) grants root-equivalent host access. On untrusted environments, use the [Docker Socket Proxy example](https://github.com/hapheus/cf-docker-tunnel-sync/tree/main/examples/03-secure-socket-proxy).
+- **Access Labels:** Labels like `cf.tunnel.access` display metadata in the UI only; they do not configure Cloudflare Access authorization policies.
+
+---
+
+## Resources & Links
+
+- **GitHub Repository:** [hapheus/cf-docker-tunnel-sync](https://github.com/hapheus/cf-docker-tunnel-sync)
+- **Detailed Quickstart:** [QUICKSTART.md](https://github.com/hapheus/cf-docker-tunnel-sync/blob/main/QUICKSTART.md)
+- **Label Reference:** [docs/labels.md](https://github.com/hapheus/cf-docker-tunnel-sync/blob/main/docs/labels.md)
+- **Architecture & Safety Limits:** [docs/architecture-and-safety.md](https://github.com/hapheus/cf-docker-tunnel-sync/blob/main/docs/architecture-and-safety.md)
+- **Optional Web Dashboard Image:** [`hapheus/cf-tunnel-dashboard`](https://hub.docker.com/r/hapheus/cf-tunnel-dashboard)

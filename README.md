@@ -2,36 +2,127 @@
 
 # ☁️ cf-docker-tunnel-sync
 
+**Automate Cloudflare Tunnel ingress rules and DNS CNAME records directly from Docker container labels.**
+
 [![GitHub Release](https://img.shields.io/github/v/release/hapheus/cf-docker-tunnel-sync?style=flat-square&color=blue)](https://github.com/hapheus/cf-docker-tunnel-sync/releases)
 [![Docker Pulls](https://img.shields.io/docker/pulls/hapheus/cf-tunnel-sync?style=flat-square)](https://hub.docker.com/r/hapheus/cf-tunnel-sync)
-[![Docker Image Size](https://img.shields.io/docker/image-size/hapheus/cf-tunnel-sync/latest?style=flat-square)](https://hub.docker.com/r/hapheus/cf-tunnel-sync)
-[![GitHub Stars](https://img.shields.io/github/stars/hapheus/cf-docker-tunnel-sync?style=flat-square)](https://github.com/hapheus/cf-docker-tunnel-sync/stargazers)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
-
 [![CI Status](https://img.shields.io/github/actions/workflow/status/hapheus/cf-docker-tunnel-sync/ci.yml?branch=main&style=flat-square)](https://github.com/hapheus/cf-docker-tunnel-sync/actions)
-[![Daily Live Image Verification](https://github.com/hapheus/cf-docker-tunnel-sync/actions/workflows/daily-image-verification.yml/badge.svg)](https://github.com/hapheus/cf-docker-tunnel-sync/actions/workflows/daily-image-verification.yml)
-[![OSV-Scanner](https://github.com/hapheus/cf-docker-tunnel-sync/actions/workflows/osv-scanner.yml/badge.svg)](https://github.com/hapheus/cf-docker-tunnel-sync/actions/workflows/osv-scanner.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/hapheus/cf-docker-tunnel-sync/badge)](https://scorecard.dev/viewer/?uri=github.com/hapheus/cf-docker-tunnel-sync)
-[![OpenSSF Best Practices](https://img.shields.io/cii/percentage/15662?style=flat-square&logo=linuxfoundation&label=OpenSSF%20Best%20Practices)](https://www.bestpractices.dev/projects/15662)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 
 [Quickstart](QUICKSTART.md) · [Documentation](docs/README.md) · [Examples](examples/) · [Contributing](CONTRIBUTING.md)
 
 </div>
 
-Synchronize Docker container labels with Cloudflare Tunnel ingress and proxied DNS CNAME records. The Python controller manages configuration; the separate `cloudflared` connector carries traffic to applications on a reachable Docker network.
+---
 
-## How it works
+### Why cf-docker-tunnel-sync?
 
-Give a running application a hostname and its internal port, then attach it to the connector's network:
+Exposing Docker containers through Cloudflare usually requires manual configuration in the Cloudflare Zero Trust dashboard or static `config.yml` files, combined with manual DNS record creation.
+
+`cf-docker-tunnel-sync` eliminates this friction:
+- 🔒 **Zero Inbound Ports:** No router port forwarding (80/443) or dynamic DNS required. Traffic reaches your host securely via Cloudflare Tunnel.
+- 🏷️ **Label-Driven Routing:** Add two labels (`cf.tunnel.hostname` and `cf.tunnel.port`) to any container; ingress routes and proxied DNS CNAMEs are managed automatically.
+- ⚡ **Event-Driven & Instant:** Detects container startup and teardown via Docker events in real-time, with automatic debouncing and periodic reconciliation fallback.
+- 🛡️ **Production Safety Guards:** Safe deletion limits, unmanaged route preservation, dry-run mode, and preflight validation prevent accidental outages.
+- 📊 **Built-In Visibility:** Includes an embedded web dashboard, Prometheus metrics (`/metrics`), structured JSON logging, and webhook notifications.
+
+---
+
+## How It Works
+
+The architecture separates the **control plane** from the **data plane**:
+
+```
+ ┌─────────────────────────────────────────────────────────────┐
+ │ Host / Docker Engine                                        │
+ │                                                             │
+ │   ┌─────────────────┐  Docker API   ┌─────────────────────┐ │
+ │   │ App Container   │◄──────────────┤ cf-tunnel-sync      │ │
+ │   │ (cf.tunnel.*)   │               │ (Control Plane)     │ │
+ │   └────────┬────────┘               └──────────┬──────────┘ │
+ │            │ Internal Traffic                  │ Cloudflare │
+ │            │ (cf-tunnel-net)                   │ API        │
+ │   ┌────────┴────────┐                          ▼            │
+ │   │ cloudflared     │◄─────────────────► Cloudflare Edge    │
+ │   │ (Data Plane)    │  Encrypted Tunnel  (Ingress + DNS)    │
+ │   └─────────────────┘                                       │
+ └─────────────────────────────────────────────────────────────┘
+```
+
+1. **Control Plane (`cf-tunnel-sync`):** Watches Docker events. When a labeled container starts, it creates/updates the Cloudflare Tunnel ingress route and provisions the DNS CNAME record via the Cloudflare API.
+2. **Data Plane (`cloudflared`):** The official Cloudflare connector carries encrypted traffic between Cloudflare's edge and your containers over a shared Docker bridge network.
+
+---
+
+## Quick Start (60 Seconds)
+
+### 1. Start the Gateway
+
+Create a minimal `docker-compose.yml` with your Cloudflare API token and domain:
 
 ```yaml
 services:
-  web:
-    image: nginx:alpine
+  cloudflared:
+    image: cloudflare/cloudflared:2025.5.0
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token-file /etc/cloudflared/token
+    volumes:
+      - cf_token_data:/etc/cloudflared
+    networks:
+      - cf-tunnel-net
+    depends_on:
+      cf-tunnel-sync:
+        condition: service_healthy
+
+  cf-tunnel-sync:
+    image: hapheus/cf-tunnel-sync:latest
+    restart: unless-stopped
+    environment:
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN}
+      CLOUDFLARE_TUNNEL_NAME: homelab-tunnel
+      DOMAIN_NAME: example.com
+      CF_NETWORK_NAME: cf-tunnel-net
+      DASHBOARD_ENABLED: "false"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - cf_token_data:/etc/cloudflared
+    networks:
+      - cf-tunnel-net
+    healthcheck:
+      test: ["CMD", "python", "healthcheck.py"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+networks:
+  cf-tunnel-net:
+    name: cf-tunnel-net
+    driver: bridge
+
+volumes:
+  cf_token_data:
+```
+
+Start the gateway:
+```bash
+docker compose up -d
+```
+
+### 2. Expose an Application
+
+Attach any container to `cf-tunnel-net` with two labels:
+
+```yaml
+services:
+  whoami:
+    image: traefik/whoami:latest
+    restart: unless-stopped
     networks:
       - cf-tunnel-net
     labels:
-      cf.tunnel.hostname: web.example.com
+      cf.tunnel.hostname: whoami.example.com
       cf.tunnel.port: "80"
 
 networks:
@@ -39,41 +130,65 @@ networks:
     external: true
 ```
 
-The gateway discovers the service through Docker events and periodic reconciliation, updates its named tunnel, and manages the corresponding CNAME. The default fallback interval is 900 seconds; events use a 2.5-second debounce window. No application host-port mapping is required for tunnel traffic.
+Run `docker compose up -d`. `cf-tunnel-sync` detects the new container, registers the route in Cloudflare Tunnel, and creates the `whoami.example.com` CNAME record.
 
-The controller can initialize a tunnel, write the connector token to a shared volume, and attempt a connector restart. It exposes status, logs, metrics, and an embedded dashboard. A separate Nginx dashboard is optional; headless deployments do not need published API ports.
+### 3. Verify
 
-## Before using existing resources
+```bash
+curl -I https://whoami.example.com
+```
 
-Use a dedicated tunnel and a scoped token. Ownership comments, grace periods, and deletion limits reduce accidental cleanup, but current behavior has important boundaries:
+> [!TIP]
+> For production deployments, digest pinning, and secure Docker socket proxies, see the comprehensive [QUICKSTART.md](QUICKSTART.md).
 
-- Dry-run performs reads and planning only: it does not create a tunnel, write its token, or restart the connector. A missing tunnel is reported as a prerequisite.
-- Manual ingress paths, duplicate rules, catch-alls, and their relative order are preserved. The first root route for an actively discovered hostname is managed by the synchronizer.
-- Missing, empty, or null DNS comments do not establish ownership. The default policy can adopt matching untagged records for active services.
-- Access labels are status metadata and do not configure authentication.
+---
 
-Read [architecture and safety](docs/architecture-and-safety.md) and [security](docs/security.md) before connecting an existing deployment. Use `--preflight` for non-mutating inspection; it still reads configured Docker and Cloudflare resources.
+## When to Use (and When NOT to Use)
 
-## Deployment choices
+### ✅ Ideal For
+- **Homelabs & Single-Host Setups:** Expose self-hosted web apps (Nextcloud, Home Assistant, Vaultwarden, Jellyfin) without public IP exposure or port forwarding.
+- **Docker Compose Stacks:** Maintain independent Compose projects that share a single tunnel gateway via an external bridge network.
+- **Automated Staging Environments:** Dynamically provision public test hostnames as feature containers spin up and down.
+
+### ❌ Not Intended For
+- **Kubernetes / Docker Swarm:** Use Cloudflare's native Kubernetes Ingress Controller or cluster operators instead.
+- **Raw TCP/UDP Protocols:** Cloudflare Tunnel ingress primarily routes HTTP/HTTPS. Exposing arbitrary TCP/SSH requires client-side `cloudflared access` configurations not managed by this controller.
+- **Cloudflare Access Policy Provisioning:** Labels such as `cf.tunnel.access` display metadata in the dashboard, but **do not** create Access authorization policies. Configure Cloudflare Zero Trust Access policies separately.
+- **Internal LAN-Only Proxying:** This tool manages Cloudflare public edge routing, not local mDNS or internal split-horizon DNS.
+
+---
+
+## Deployment Examples
 
 | Example | Purpose |
 | --- | --- |
-| [Single stack](examples/01-quickstart-single-stack/README.md) | Gateway, connector, and demo application together. |
-| [Separate stacks](examples/02-multi-stack-external-net/README.md) | One gateway network shared by independent application stacks. |
-| [Socket proxy](examples/03-secure-socket-proxy/README.md) | Restrict Docker API access; automatic restart is blocked. |
-| [Origin settings](examples/04-advanced-labels-tls-multiport/README.md) | HTTPS origins, custom headers, and explicit port selection. |
-| [Multiple gateways](examples/05-multi-account/README.md) | Separate domains, tokens, connector targets, and volumes. |
+| [Single stack](examples/01-quickstart-single-stack/README.md) | Gateway, connector, and demo application running together in one Compose file. |
+| [Separate stacks](examples/02-multi-stack-external-net/README.md) | Central gateway network shared across independent application Compose projects. |
+| [Socket proxy](examples/03-secure-socket-proxy/README.md) | Enhanced security: isolates the Docker socket behind a read-only TCP proxy. |
+| [Origin settings](examples/04-advanced-labels-tls-multiport/README.md) | HTTPS origins, custom request headers, multi-port selection, and TLS verification. |
+| [Multiple gateways](examples/05-multi-account/README.md) | Multi-domain and multi-account configurations with dedicated tokens and volumes. |
 
-The root Compose file publishes the embedded dashboard on host port 8080 and enables authentication by default. The [Quickstart](QUICKSTART.md) uses a headless gateway instead. See [configuration](docs/configuration.md) before changing ports or environment values.
+---
 
 ## Dashboard
 
-| Desktop | Mobile |
+`cf-tunnel-sync` includes an embedded dashboard (port 8090 / configurable) and supports an optional standalone Nginx companion container ([`cf-tunnel-dashboard`](cf-tunnel-dashboard/DOCKERHUB.md)).
+
+| Desktop View | Mobile View |
 | --- | --- |
 | ![Dashboard overview](docs/screenshots/dashboard-preview.png) | ![Dashboard on a narrow display](docs/screenshots/dashboard-mobile.png) |
 
-Screenshots illustrate the UI; status reflects controller observations rather than an independent end-to-end application health check.
+---
+
+## Documentation Index
+
+- **Getting Started:** [Quickstart Guide](QUICKSTART.md) · [Exposing Existing Services](docs/onboarding.md) · [Scoped API Token Setup](docs/cloudflare-permissions.md)
+- **Configuration:** [Environment Variables Reference](docs/configuration.md) · [Container Label Reference](docs/labels.md) · [Docker Networking Guide](docs/networking-guide.md)
+- **Operations & Security:** [Operations & Metrics](docs/operations.md) · [Troubleshooting Guide](docs/troubleshooting.md) · [Security Model](docs/security.md) · [Architecture & Safety Limits](docs/architecture-and-safety.md)
+- **Reference:** [HTTP API Documentation](docs/api.md) · [Product Scope & Boundaries](docs/product-boundaries.md) · [Compatibility & Upgrades](docs/COMPATIBILITY.md)
+
+---
 
 ## License
 
-[MIT](LICENSE).
+[MIT](LICENSE)
