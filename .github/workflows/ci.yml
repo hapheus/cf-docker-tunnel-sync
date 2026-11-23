@@ -35,12 +35,9 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Verify Lockfile and Requirements Parity
+      - name: Verify Lockfile
         if: matrix.python-version == '3.11'
-        run: |
-          uv lock --check
-          uv export --no-dev --no-emit-project --frozen -o /tmp/requirements-check.txt
-          diff -u -I "^#" cf-tunnel-sync/requirements.txt /tmp/requirements-check.txt
+        run: uv lock --check
 
       - name: Install Dependencies
         run: |

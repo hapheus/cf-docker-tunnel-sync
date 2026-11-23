@@ -25,7 +25,7 @@ devenv shell -- uv run mypy --follow-imports=silent src/tunnel_sync
 
 Use isolated fixtures and mocked APIs for local checks. A mock passing does not establish live Docker/Cloudflare behavior. Access to a running Docker daemon or authenticated services requires task-specific authorization. Required CI checks must pass before merge regardless of the agreed local subset.
 
-The application is installable as a Python package. Build distributions with `devenv shell -- uv build`; the wheel contains the `tunnel_sync` components, compatible top-level modules, and dashboard assets. The container continues installing production dependencies from `uv.lock` and copying application source. Export the dependency-only requirements with `uv export --no-dev --no-emit-project --frozen -o cf-tunnel-sync/requirements.txt` so the editable application itself does not enter that list.
+The application is installable as a Python package. Build distributions with `devenv shell -- uv build`. The wheel contains the `tunnel_sync` components, compatible top-level modules, and dashboard assets. The container installs production dependencies from `uv.lock` and copies application source. If you need a requirements file for a pip-based tool, generate a local export with `uv export --no-dev --no-emit-project --frozen -o /tmp/cf-tunnel-sync-requirements.txt`.
 
 ## Python architecture
 
